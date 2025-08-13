@@ -1,0 +1,173 @@
+# Component models (non-spectral)
+# These are spatial/morphological models without spectral dependence
+
+pointSource:
+  id: 1
+  function: pointSource
+  variables:
+    - RA
+    - Dec
+    - Amplitude
+    - Offset
+  make_image: false
+  SZ: false
+  
+gaussSource:
+  id: 2
+  function: gaussSource
+  variables:
+    - RA
+    - Dec
+    - Amplitude
+    - Major
+    - e
+    - Angle
+    - Offset
+  make_image: false
+  SZ: false
+
+gaussSurface:
+  id: 3
+  function: gaussSurface
+  variables:
+    - RA
+    - Dec
+    - Amplitude
+    - Major
+    - e
+    - Angle
+    - Offset
+    - Temperature
+  make_image: true
+  SZ: false
+  
+betaPressure:
+  id: 4
+  function: betaProfile
+  variables:
+    - RA
+    - Dec
+    - Amplitude
+    - Major
+    - e
+    - Angle
+    - Offset
+    - Temperature
+    - Beta
+    - z
+  make_image: true
+  SZ: true
+
+gnfwPressure:
+  id: 5
+  function: gnfwProfile
+  variables:
+    - RA
+    - Dec
+    - Amplitude
+    - Major
+    - e
+    - Angle
+    - Offset
+    - Temperature
+    - Alpha
+    - Beta
+    - Gamma
+    - z
+  make_image: true
+  SZ: true
+
+A10Pressure:
+  id: 6
+  function: a10Profile
+  variables:
+    - RA
+    - Dec
+    - log10
+    - c500
+    - e
+    - Angle
+    - Offset
+    - Temperature
+    - Alpha
+    - Beta
+    - Gamma
+    - P0
+    - Alpha_p
+    - z
+    - bias
+  make_image: true
+  SZ: true
+  
+A10PressureLS:
+  id: 7
+  function: a10Profile
+  variables:
+    - RA
+    - Dec
+    - log10
+    - c500
+    - e
+    - Angle
+    - Offset
+    - Temperature
+    - Alpha
+    - Beta
+    - Gamma
+    - P0
+    - Alpha_p
+    - z
+    - bias
+    - depth
+  make_image: true
+  SZ: true
+
+G17Pressure:
+  id: 13
+  function: g17Profile
+  variables:
+    - RA
+    - Dec
+    - log10M
+    - c500
+    - e
+    - Angle
+    - Offset
+    - Temperature
+    - Alpha
+    - Beta0
+    - Beta1
+    - Beta2
+    - Gamma0
+    - Gamma1
+    - Gamma2
+    - P0
+    - Alpha_p
+    - C_p
+    - z
+    - bias
+  make_image: true
+  SZ: true
+
+L15Pressure:
+  id: 14
+  function: l15Profile
+  variables:
+    - RA
+    - Dec
+    - log10M
+    - c500
+    - e
+    - Angle
+    - Offset
+    - Temperature
+    - Alpha
+    - Beta
+    - Gamma
+    - Delta
+    - Epsilon
+    - P0
+    - z
+    - bias
+  make_image: true
+  SZ: true

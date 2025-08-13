@@ -1,0 +1,48 @@
+# Spectral models
+# These models have frequency/spectral dependence
+
+powerLaw:
+  id: 8
+  function: powerLaw
+  variables:
+    - SpecIndex
+  make_image: false
+  SZ: false
+
+powerLawMod:
+  id: 9
+  function: powerLawMod
+  variables:
+    - SpecIndex
+    - SpecCurv
+  make_image: false
+  SZ: false
+  
+powerDust:
+  id: 10
+  function: powerDust
+  variables:
+    - SpecIndex
+    - SpecCurv
+    - Temp
+    - beta
+    - z
+    - kappa0
+    - nu0
+  make_image: false
+  SZ: false
+
+tSZ:
+  id: 11
+  function: tSZ
+  variables: []
+  make_image: false
+  SZ: false
+
+Scaling:
+  id: 12
+  function: Scaling
+  variables:
+    - amp
+  make_image: false
+  SZ: false
