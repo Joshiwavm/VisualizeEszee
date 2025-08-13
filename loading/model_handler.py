@@ -2,6 +2,8 @@ import numpy as np
 from astropy.io import fits
 from astropy.cosmology import Planck18 as cosmo
 from ..model.models import *
+from ..model.transform import TransformInput
+from ..utils import calculate_r500
 
 class ModelHandler:
     """
@@ -105,26 +107,22 @@ class ModelHandler:
                     fits_file = self.models[name]['binvis'].replace('fid', str(field)).replace('sid', str(spw)) + '.image.fits'
                 else:
                     # Fallback to default path construction
-                    fits_file = f'output/{self.models[name]['array']}/output_{self.models[name]['band']}_{self.models[name]['array']}.im.field-{field}.spw-{spw}.image.fits'
+                    fits_file = f"output/{self.models[name]['array']}/output_{self.models[name]['band']}_{self.models[name]['array']}.im.field-{field}.spw-{spw}.image.fits"
                 
                 try:
                     with fits.open(fits_file) as hdul:
                         header = hdul[0].header.copy()
-                        image_data = hdul[0].data.copy()  # Save the image data
+                        image_data = hdul[0].data.copy()
                         nx, ny = header['NAXIS1'], header['NAXIS2']
-                        crpix1, crpix2 = header['CRPIX1'], header['CRPIX2']
-                        crval1, crval2 = header['CRVAL1'], header['CRVAL2']
                         cdelt1, cdelt2 = header['CDELT1'], header['CDELT2']
-                                            
+                        crval1, crval2 = header['CRVAL1'], header['CRVAL2']
                 except FileNotFoundError:
                     print(f"  Warning: FITS file not found: {fits_file}")
                     continue
                 
                 # Create coordinate grids for this field/spw following Veszee approach
-                x_coords = np.arange(-nx/2, nx/2, 1.)
-                y_coords = np.arange(-ny/2, ny/2, 1.)
-                x_coords += 0.5
-                y_coords -= 0.5
+                x_coords = np.arange(-nx/2, nx/2, 1.) + 0.5
+                y_coords = np.arange(-ny/2, ny/2, 1.) - 0.5
                 X, Y = np.meshgrid(x_coords, y_coords)
                 
                 # Convert pixel coordinates to sky coordinates using WCS transformation
@@ -164,10 +162,10 @@ class ModelHandler:
                         
                 except FileNotFoundError:
                     print(f"  Warning: Primary beam file not found: {pbeam_file}")
-                    print(f"  Continuing without primary beam correction")
+                    pbeam_data = np.ones_like(model_map)
                 except Exception as e:
                     print(f"  Warning: Error loading primary beam: {e}")
-                    print(f"  Continuing without primary beam correction")
+                    pbeam_data = np.ones_like(model_map)
 
                 # Store the model map in nested structure
                 self.model_maps[name][field_key][spw_key] = {
@@ -187,16 +185,13 @@ class ModelHandler:
 
         # Generate model based on type
         if model_type in ['gnfwPressure', 'A10Pressure', 'betaPressure']:
-            model_map = self._generate_pressure_profile(model_type, parameters['model'], r_grid, header)
+            return self._generate_pressure_profile(model_type, parameters['model'], r_grid, header)
         elif model_type == 'pointSource':
-            model_map = self._generate_point_source(parameters['model'], ra_map, dec_map)
+            return self._generate_point_source(parameters['model'], ra_map, dec_map)
         elif model_type in ['gaussSource', 'gaussSurface']:
-            model_map = self._generate_gaussian_model(parameters['model'], r_grid)
-        else:
-            print(f"Warning: Model type '{model_type}' not implemented, returning zeros")
-            model_map = np.zeros_like(ra_map)
+            return self._generate_gaussian_model(parameters['model'], r_grid)
         
-        return model_map
+        return np.zeros_like(ra_map)
 
     def _make_radial_grid(self, ra_map, dec_map, model_params):
         """
@@ -227,79 +222,46 @@ class ModelHandler:
     def _generate_pressure_profile(self, model_type, parameters, r_grid, header):
         """Generate pressure profile model using Veszee approach with proper model functions."""
 
-        # Extract basic parameters
-        amplitude = parameters.get('amplitude', parameters.get('Amplitude', 1.0))
-        major_axis_deg = parameters.get('major', parameters.get('Major', 1.0))
-        redshift = parameters.get('redshift', parameters.get('z', 0.5))
-        
-        # Convert major axis to degrees if needed (assume arcmin if > 1)
-        if major_axis_deg > 1.0:
-            major_axis_deg = major_axis_deg / 60.0
-            
-        # Apply the Veszee coordinate transformation to get physical coordinates
-        r_physical = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(redshift)
-        major_axis_physical = np.deg2rad(major_axis_deg) * cosmo.angular_diameter_distance(redshift)
-        coord = r_physical.value / major_axis_physical.value
-                
-        # Create radial mesh for profile evaluation (like Veszee info.linmesh)
-        r_min = 1e-3  # Minimum radius to avoid singularities
-        r_max = coord.max() * 2.0  # Extend beyond image
-        n_points = 200  # Number of radial points
-        
-        rs = np.logspace(np.log10(r_min), np.log10(r_max), n_points)  # Start from small radius
-                    
-        # Prepare parameters for model functions (following Veszee input_par format)
-        if model_type == 'gnfwPressure':
-            # gnfwProfile(grid, offset, amp, major, e, alpha, beta, gamma, limdist, epsrel, freeLS)
-            offset = parameters.get('offset')
-            e = parameters.get('e', parameters.get('eccentricity'))
-            alpha = parameters.get('alpha')
-            beta = parameters.get('beta')
-            gamma = parameters.get('gamma')
-            
-            # Evaluate profile on radial mesh
-            integrated_P = gnfwProfile(rs, offset, amplitude, 1.0, e, alpha, beta, gamma)
-            
-        elif model_type == 'A10Pressure':
-            # a10Profile(grid, offset, amp, major, e, alpha, beta, gamma, ap, c500, mass, limdist, epsrel, freeLS)
-            offset = parameters.get('offset', 0.0)
-            e = parameters.get('e', parameters.get('eccentricity', 0.0))
-            alpha = parameters.get('alpha', 1.05)
-            beta = parameters.get('beta', 5.49)
-            gamma = parameters.get('gamma', 0.31)
-            concentration = parameters.get('concentration', parameters.get('c500', 1.18))
-            alpha_p = parameters.get('alpha_p', 0.12)
-            mass = parameters.get('mass', 2e14)
-            
-            # Convert mass to proper units (like in Veszee)
-            mass_norm = mass / 3e14  # Normalize by 3e14 solar masses
-            
-            # Evaluate profile on radial mesh
-            integrated_P = a10Profile(rs, offset, amplitude, 1.0, e, alpha, beta, gamma, 
-                                    alpha_p, concentration, mass_norm)
-            
-        elif model_type == 'betaPressure':
-            # betaProfile(grid, offset, amp, major, e, beta, limdist, epsrel, freeLS)
-            offset = parameters.get('offset', 0.0)
-            e = parameters.get('e', parameters.get('eccentricity', 0.0))
-            beta = parameters.get('beta', 0.7)
-            
-            # Evaluate profile on radial mesh  
-            integrated_P = betaProfile(rs, offset, amplitude, 1.0, e, beta)
-            
+        # Transform high-level params to model inputs
+        xform = TransformInput(parameters, model_type)
+        input_par = xform.generate()
+        z = parameters.get('redshift', parameters.get('z', None))
+        # Physical radial grid (kpc)
+        r_phys_kpc = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(z).to('kpc').value
+        # Normalized coordinate if scale known
+        if input_par.get('major') is not None:
+            r_norm = r_phys_kpc / (input_par['major'] * 1000.0)
         else:
-            print(f"  Warning: Model type '{model_type}' not recognized")
+            r_norm = r_phys_kpc / max(r_phys_kpc.max(), 1.0)
+        r_min = max(r_norm.min(), 1e-6)
+        r_max = r_norm.max() * 2.0
+        n_points = 200
+        if model_type == 'gnfwPressure':
+            rs = np.logspace(np.log10(r_min), np.log10(r_max), n_points)[1:]
+        else:
+            rs = np.logspace(np.log10(r_min), np.log10(r_max), n_points)
+        if model_type == 'A10Pressure':
+            shape = a10Profile(rs, input_par.get('offset', 0.0), 1.0, 1.0, input_par.get('e', 0.0),
+                               input_par['alpha'], input_par['beta'], input_par['gamma'],
+                               input_par['ap'], input_par['c500'], input_par['mass'])
+        elif model_type == 'gnfwPressure':
+            shape = gnfwProfile(rs, input_par.get('offset', 0.0), 1.0, 1.0, input_par.get('e', 0.0),
+                                input_par['alpha'], input_par['beta'], input_par['gamma'])
+        elif model_type == 'betaPressure':
+            shape = betaProfile(rs, input_par.get('offset', 0.0), 1.0, 1.0, input_par.get('e', 0.0), input_par['beta'])
+        else:
             return np.zeros_like(r_grid)
-                
-        # Interpolate profile onto coordinate grid (like in Veszee)
-        model_map = np.interp(coord, rs, integrated_P)
-        
-        # Apply SZ normalization if available (like in Veszee: * self.info.ysznorm.value)
-        if 'ysznorm' in parameters:
-            model_map *= parameters['ysznorm']
-        elif hasattr(parameters, 'ysznorm'):
-            model_map *= parameters.ysznorm.value
-                    
+        model_map = np.interp(r_norm, rs, shape)
+        # Optional physical scaling (P500 * p_norm) only for A10 if mass provided
+        if model_type == 'A10Pressure' and 'mass' in parameters:
+            mass = parameters['mass']
+            Ez = cosmo.H(z) / cosmo.H0
+            M500_norm = mass / 3e14
+            P500 = 1.65e-3 * Ez.value**(8/3) * M500_norm**(2/3)
+            p_norm = parameters.get('p_norm', 1.0)
+            if 'alpha_p' in parameters and parameters.get('alpha_p', 0.0) > 0:
+                p_norm *= (cosmo.H0.value / 70.0)**(-3/2)
+            model_map *= (P500 * p_norm)
         return model_map
 
     def _generate_point_source(self, parameters, ra_map, dec_map):
@@ -343,7 +305,7 @@ class ModelHandler:
 
 
 
-
+        
 
     def _generate_model_from_quantiles(self, model, quantile_type, ra_map, dec_map, header):
         """Generate model map from specific quantile (placeholder)."""
@@ -366,10 +328,6 @@ class ModelHandler:
         # Need to map parameter indices to physical meaning based on model type
         
         return model_map
-
-
-
-
 
     def _generate_marginalized_model(self, model, ra_map, dec_map, header, n_samples):
         """Generate marginalized model over posterior samples (placeholder)."""

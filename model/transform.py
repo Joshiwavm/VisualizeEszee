@@ -12,7 +12,7 @@ class TransformInput:
     Transform high-level model parameters to inputs expected by models.py
     functions, without forcing a specific global normalization.
 
-    Supports A10Pressure and gNFW pressure models where possible.
+    Supports A10Pressure, gNFW (gnfwPressure), and betaPressure models.
     """
 
     def __init__(self, model_params: Dict[str, Any], model_type: str):
@@ -32,6 +32,8 @@ class TransformInput:
             return self._a10_pressure(base)
         if self.model_type == 'gnfwPressure':
             return self._gnfw_pressure(base)
+        if self.model_type == 'betaPressure':
+            return self._beta_pressure(base)
 
         # Fallback: return the base; callers can decide how to proceed
         return base
@@ -64,31 +66,25 @@ class TransformInput:
         }
         return params
 
-    def _gnfw_pressure(self, base: Dict[str, Any]) -> Dict[str, Any]:
-        """Build gNFW parameters. If an angular scale is provided, convert to physical.
-        Accepted angular keys (priority order):
-          - 'Major' (deg), 'major_deg', 'theta_s_deg', 'theta_s_arcmin', 'major' (assumed deg)
-        """
-        z = float(self.p.get('redshift', self.p.get('z', 0.5)))
-
-        # Try to get an angular scale in degrees
-        ang_deg = None
+    def _extract_angular_scale_deg(self) -> float | None:
+        """Attempt to extract an angular scale in degrees from common keys."""
         if 'Major' in self.p:
-            ang_deg = float(self.p['Major'])
-        elif 'major_deg' in self.p:
-            ang_deg = float(self.p['major_deg'])
-        elif 'theta_s_deg' in self.p:
-            ang_deg = float(self.p['theta_s_deg'])
-        elif 'theta_s_arcmin' in self.p:
-            ang_deg = float(self.p['theta_s_arcmin']) / 60.0
-        elif 'major' in self.p:
-            # Heuristic: treat as degrees to mirror old code behavior
-            ang_deg = float(self.p['major'])
+            return float(self.p['Major'])
+        if 'major_deg' in self.p:
+            return float(self.p['major_deg'])
+        if 'theta_s_deg' in self.p:
+            return float(self.p['theta_s_deg'])
+        if 'theta_s_arcmin' in self.p:
+            return float(self.p['theta_s_arcmin']) / 60.0
+        if 'major' in self.p:
+            # Heuristic: treat as degrees
+            return float(self.p['major'])
+        return None
 
-        if ang_deg is not None:
-            major_mpc = (np.deg2rad(ang_deg) * cosmo.angular_diameter_distance(z).to(u.Mpc)).value
-        else:
-            major_mpc = None
+    def _gnfw_pressure(self, base: Dict[str, Any]) -> Dict[str, Any]:
+        z = float(self.p.get('redshift', self.p.get('z', 0.5)))
+        ang_deg = self._extract_angular_scale_deg()
+        major_mpc = (np.deg2rad(ang_deg) * cosmo.angular_diameter_distance(z).to(u.Mpc)).value if ang_deg is not None else None
 
         alpha = float(self.p.get('alpha', 1.05))
         beta = float(self.p.get('beta', 5.49))
@@ -97,9 +93,24 @@ class TransformInput:
         params = {
             **base,
             'amp': 1.0,
-            'major': major_mpc,  # may be None if no angular size was supplied
+            'major': major_mpc,
             'alpha': alpha,
             'beta': beta,
             'gamma': gamma,
+        }
+        return params
+
+    def _beta_pressure(self, base: Dict[str, Any]) -> Dict[str, Any]:
+        z = float(self.p.get('redshift', self.p.get('z', 0.5)))
+        ang_deg = self._extract_angular_scale_deg()
+        major_mpc = (np.deg2rad(ang_deg) * cosmo.angular_diameter_distance(z).to(u.Mpc)).value if ang_deg is not None else None
+
+        beta_val = float(self.p.get('beta', 0.7))
+
+        params = {
+            **base,
+            'amp': 1.0,
+            'major': major_mpc,
+            'beta': beta_val,
         }
         return params
