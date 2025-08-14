@@ -19,6 +19,7 @@ except ImportError:
 
 global Tcmb; Tcmb = 2.7255
 global C; C = 299792458
+global ysznorm; ysznorm = (const.sigma_T/const.m_e/const.c**2).to(u.cm**3/u.keV/u.Mpc)
 
 def calculate_r500(mass, redshift):
     """Calculate R500 in kpc for given mass (M500 in solar masses) and redshift.

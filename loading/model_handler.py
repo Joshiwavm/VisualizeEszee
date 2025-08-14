@@ -1,9 +1,11 @@
 import numpy as np
 from astropy.io import fits
 from astropy.cosmology import Planck18 as cosmo
+from astropy import units as u
+from astropy import constants as const
 from ..model.models import *
 from ..model.transform import TransformInput
-from ..utils import calculate_r500
+from ..utils import calculate_r500, ysznorm
 
 class ModelHandler:
     """
@@ -177,21 +179,58 @@ class ModelHandler:
                     'pb_map': pbeam_data
                 }
 
-    def _generate_model_from_parameters(self, model_type, parameters, ra_map, dec_map, header):
-        """Generate model map from direct parameters using proper radial grid approach."""
+
+
+    def _generate_model_from_parameters(self, model_type, parameters, ra_map, dec_map, header,
+                                        rs = np.append(0.0, np.logspace(-5, 5, 100))):
+        """Generate model map from direct parameters."""
+
+        xform = TransformInput(parameters['model'], model_type)
+        input_par = xform.generate()
         
-        # Create radial distance grid 
         r_grid = self._make_radial_grid(ra_map, dec_map, parameters['model'])
 
-        # Generate model based on type
-        if model_type in ['gnfwPressure', 'A10Pressure', 'betaPressure']:
-            return self._generate_pressure_profile(model_type, parameters['model'], r_grid, header)
-        elif model_type == 'pointSource':
-            return self._generate_point_source(parameters['model'], ra_map, dec_map)
-        elif model_type in ['gaussSource', 'gaussSurface']:
-            return self._generate_gaussian_model(parameters['model'], r_grid)
-        
-        return np.zeros_like(ra_map)
+        z = parameters['model'].get('redshift', parameters['model'].get('z'))
+        r_phys_mpc = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(z).to(u.Mpc).value
+        coord = r_phys_mpc / input_par.get('major')
+
+        rs_sample = rs[1:] if model_type == 'gnfwPressure' else rs
+
+        if model_type == 'A10Pressure':
+            profile = a10Profile(rs_sample, 
+                                 input_par.get('offset'), 
+                                 input_par['amp'], 
+                                 input_par.get('major'), 
+                                 input_par.get('e'),
+                                 input_par['alpha'], 
+                                 input_par['beta'], 
+                                 input_par['gamma'],
+                                 input_par['ap'], 
+                                 input_par['c500'], 
+                                 input_par['mass'])
+        elif model_type == 'gnfwPressure':
+            profile = gnfwProfile(rs_sample, 
+                                input_par.get('offset'), 
+                                input_par['amp'], 
+                                input_par.get('major'), 
+                                input_par.get('e'),
+                                input_par['alpha'], 
+                                input_par['beta'], 
+                                input_par['gamma'])
+        elif model_type == 'betaPressure':
+            profile = betaProfile(rs_sample, 
+                                input_par.get('offset'), 
+                                input_par['amp'], 
+                                input_par.get('major'), 
+                                input_par.get('e'), 
+                                input_par['beta'])
+        else:
+            return np.zeros_like(r_grid)
+
+        model_map = np.interp(coord, rs_sample, profile, left=profile[0], right=profile[-1])
+        model_map = model_map * ysznorm
+
+        return model_map
 
     def _make_radial_grid(self, ra_map, dec_map, model_params):
         """
@@ -200,10 +239,10 @@ class ModelHandler:
         """
         
         # Extract model center and orientation parameters
-        ra_center = model_params.get('ra', model_params.get('RA', 0.0))
-        dec_center = model_params.get('dec', model_params.get('Dec', 0.0))
-        angle = model_params.get('angle', model_params.get('Angle', 0.0)) 
-        eccentricity = model_params.get('e', model_params.get('eccentricity', 0.0))
+        ra_center = model_params.get('ra')
+        dec_center = model_params.get('dec')
+        angle = model_params.get('angle', 0) 
+        eccentricity = model_params.get('e', 0)
         
         # Pre-compute trigonometric functions
         cosy = np.cos(np.deg2rad(dec_center))
@@ -212,57 +251,32 @@ class ModelHandler:
         
         # Transform to model-centered coordinate system
         modgrid_x = (-(ra_map - ra_center) * cosy * sint - (dec_map - dec_center) * cost)
-        modgrid_y = ((ra_map - ra_center) * cosy * cost - (dec_map - dec_center) * sint)
+        modgrid_y = ( (ra_map - ra_center) * cosy * cost - (dec_map - dec_center) * sint)
         
         # Calculate elliptical radial distance
         r = np.sqrt(modgrid_x**2 + modgrid_y**2 / (1.0 - eccentricity)**2)
         
         return r
 
-    def _generate_pressure_profile(self, model_type, parameters, r_grid, header):
-        """Generate pressure profile model using Veszee approach with proper model functions."""
 
-        # Transform high-level params to model inputs
-        xform = TransformInput(parameters, model_type)
-        input_par = xform.generate()
-        z = parameters.get('redshift', parameters.get('z', None))
-        # Physical radial grid (kpc)
-        r_phys_kpc = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(z).to('kpc').value
-        # Normalized coordinate if scale known
-        if input_par.get('major') is not None:
-            r_norm = r_phys_kpc / (input_par['major'] * 1000.0)
-        else:
-            r_norm = r_phys_kpc / max(r_phys_kpc.max(), 1.0)
-        r_min = max(r_norm.min(), 1e-6)
-        r_max = r_norm.max() * 2.0
-        n_points = 200
-        if model_type == 'gnfwPressure':
-            rs = np.logspace(np.log10(r_min), np.log10(r_max), n_points)[1:]
-        else:
-            rs = np.logspace(np.log10(r_min), np.log10(r_max), n_points)
-        if model_type == 'A10Pressure':
-            shape = a10Profile(rs, input_par.get('offset', 0.0), 1.0, 1.0, input_par.get('e', 0.0),
-                               input_par['alpha'], input_par['beta'], input_par['gamma'],
-                               input_par['ap'], input_par['c500'], input_par['mass'])
-        elif model_type == 'gnfwPressure':
-            shape = gnfwProfile(rs, input_par.get('offset', 0.0), 1.0, 1.0, input_par.get('e', 0.0),
-                                input_par['alpha'], input_par['beta'], input_par['gamma'])
-        elif model_type == 'betaPressure':
-            shape = betaProfile(rs, input_par.get('offset', 0.0), 1.0, 1.0, input_par.get('e', 0.0), input_par['beta'])
-        else:
-            return np.zeros_like(r_grid)
-        model_map = np.interp(r_norm, rs, shape)
-        # Optional physical scaling (P500 * p_norm) only for A10 if mass provided
-        if model_type == 'A10Pressure' and 'mass' in parameters:
-            mass = parameters['mass']
-            Ez = cosmo.H(z) / cosmo.H0
-            M500_norm = mass / 3e14
-            P500 = 1.65e-3 * Ez.value**(8/3) * M500_norm**(2/3)
-            p_norm = parameters.get('p_norm', 1.0)
-            if 'alpha_p' in parameters and parameters.get('alpha_p', 0.0) > 0:
-                p_norm *= (cosmo.H0.value / 70.0)**(-3/2)
-            model_map *= (P500 * p_norm)
-        return model_map
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     def _generate_point_source(self, parameters, ra_map, dec_map):
         """Generate point source model."""
@@ -295,17 +309,6 @@ class ModelHandler:
         model_map = amplitude * np.exp(-0.5 * (r_grid / major_axis_rad)**2)
         
         return model_map
-
-
-
-
-
-
-
-
-
-
-        
 
     def _generate_model_from_quantiles(self, model, quantile_type, ra_map, dec_map, header):
         """Generate model map from specific quantile (placeholder)."""

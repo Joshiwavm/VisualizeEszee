@@ -59,60 +59,47 @@ class PlotPressureProfiles:
             
             xform = TransformInput(model_params, model_type)
             input_par = xform.generate()
-            
-            if model_type == 'A10Pressure' and mass is not None:
-                r_s_kpc = input_par['major'] * 1000.0
-                r_norm = r_kpc / r_s_kpc
-            elif model_type in ['gnfwPressure', 'betaPressure'] and input_par.get('major') is not None:
+            # Determine normalized radius
+            if input_par.get('major') is not None:
                 r_s_kpc = input_par['major'] * 1000.0
                 r_norm = r_kpc / r_s_kpc
             else:
-                r_norm = r_kpc / 1.0
-            
+                r_norm = r_kpc / max(r_kpc.max(), 1.0)
             if model_type == 'gnfwPressure':
                 rs = np.logspace(np.log10(max(r_norm.min(), 1e-6)), np.log10(r_norm.max()*2), n_points)[1:]
             else:
                 rs = np.logspace(np.log10(max(r_norm.min(), 1e-6)), np.log10(r_norm.max()*2), n_points)
-            
+            offset = input_par.get('offset', 0.0)
+            ecc = input_par.get('e', 0.0)
             if model_type == 'A10Pressure':
-                shape = a10Profile(rs, input_par.get('offset', 0.0), 1.0, 1.0, input_par.get('e', 0.0),
-                                   input_par['alpha'], input_par['beta'], input_par['gamma'],
-                                   input_par['ap'], input_par['c500'], input_par['mass'])
+                shape = a10Profile(
+                    rs, offset,
+                    input_par['amp'], 1.0, ecc,
+                    input_par['alpha'], input_par['beta'], input_par['gamma'],
+                    input_par['ap'], input_par['c500'], input_par['mass']
+                )
             elif model_type == 'gnfwPressure':
-                shape = gnfwProfile(rs, input_par.get('offset', 0.0), 1.0, 1.0, input_par.get('e', 0.0),
-                                    input_par['alpha'], input_par['beta'], input_par['gamma'])
+                shape = gnfwProfile(
+                    rs, offset,
+                    input_par['amp'], 1.0, ecc,
+                    input_par['alpha'], input_par['beta'], input_par['gamma']
+                )
             elif model_type == 'betaPressure':
-                shape = betaProfile(rs, input_par.get('offset', 0.0), 1.0, 1.0, input_par.get('e', 0.0),
-                                    input_par['beta'])
+                shape = betaProfile(
+                    rs, offset,
+                    input_par['amp'], 1.0, ecc,
+                    input_par['beta']
+                )
             else:
                 raise ValueError(f"Unknown pressure profile type: {model_type}")
-            
-            pressure_norm = np.interp(r_norm, rs, shape)
-            
-            if mass is not None and z is not None and model_type == 'A10Pressure':
-                Ez = cosmo.H(z) / cosmo.H0
-                M500_norm = mass / 3e14
-                P500 = 1.65e-3 * Ez.value**(8/3) * M500_norm**(2/3)
-                p_norm = model_params.get('p_norm', 1.0)
-                if 'alpha_p' in model_params:
-                    alpha_p = model_params.get('alpha_p', 0.0)
-                    if alpha_p > 0:
-                        p_norm *= (cosmo.H0.value / 70.0)**(-3/2)
-                pressure_kev = pressure_norm * P500 * p_norm
-            else:
-                pressure_kev = pressure_norm
-            
+            pressure_phys = np.interp(r_norm, rs, shape)
             label = f"{model_name} ({model_type})"
-            line = ax.loglog(r_kpc, pressure_kev, label=label, **plot_kwargs)
-            
-            if mass is not None and z is not None and model_type == 'A10Pressure':
-                r500_kpc = calculate_r500(mass, z)
+            line = ax.loglog(r_kpc, pressure_phys, label=label, **plot_kwargs)
+            if model_type == 'A10Pressure' and model_params.get('mass') is not None and model_params.get('redshift') is not None:
+                r500_kpc = calculate_r500(model_params['mass'], model_params['redshift'])
                 ax.axvline(r500_kpc, color=line[0].get_color(), linestyle='--', alpha=0.5)
-        
         ax.set_xlabel('Radius (kpc)', fontsize=10)
-        ax.set_ylabel('Pressure (keV cm⁻³)' if any(
-            mi['parameters']['model'].get('mass') is not None for mi in self.models.values()
-        ) else 'Normalized Pressure', fontsize=10)
+        ax.set_ylabel('Pressure (keV cm⁻³)' if any(mi['parameters']['model'].get('type')=='A10Pressure' for mi in self.models.values()) else 'Normalized Pressure', fontsize=10)
         ax.grid(True, alpha=0.3)
         ax.legend()
         ax.set_xlim(r_range)

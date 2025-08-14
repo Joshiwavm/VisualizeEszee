@@ -6,15 +6,14 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import yaml
 from astropy.cosmology import Planck18 as cosmo
+import numpy as np  # added
 
 
 def load_pressure_profiles() -> Dict[str, Any]:
     """Load pressure profile definitions from YAML file."""
     config_path = Path(__file__).parent / "pressure_profiles.yml"
-    
     if not config_path.exists():
         raise FileNotFoundError(f"Pressure profiles config not found: {config_path}")
-    
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
@@ -22,10 +21,8 @@ def load_pressure_profiles() -> Dict[str, Any]:
 def load_component_models() -> Dict[str, Any]:
     """Load component model definitions (non-spectral)."""
     config_path = Path(__file__).parent / "component_models.yml"
-    
     if not config_path.exists():
         raise FileNotFoundError(f"Component models config not found: {config_path}")
-    
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
@@ -33,10 +30,8 @@ def load_component_models() -> Dict[str, Any]:
 def load_spectral_models() -> Dict[str, Any]:
     """Load spectral model definitions."""
     config_path = Path(__file__).parent / "spectral_models.yml"
-    
     if not config_path.exists():
         raise FileNotFoundError(f"Spectral models config not found: {config_path}")
-    
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
@@ -45,91 +40,65 @@ def get_models(proftype: str, profgeom: str = 'sph',
                ra: Optional[float] = None, dec: Optional[float] = None,
                redshift: Optional[float] = None, mass: Optional[float] = None,
                custom_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Get model parameters for a specific pressure profile type with merged cluster defaults.
+    Order of precedence (highest wins): explicit args > custom_params > profile params > cluster_defaults
     """
-    Get model parameters for a specific pressure profile type.
-    
-    Parameters
-    ----------
-    proftype : str
-        Profile type identifier (e.g., 'a10_up', 'm14_cc', 'g17_ex')
-    profgeom : str, optional
-        Profile geometry: 'sph' (spherical) or 'ell' (elliptical), default 'sph'
-    ra : float, optional
-        Right ascension in degrees
-    dec : float, optional
-        Declination in degrees
-    redshift : float, optional
-        Redshift of the cluster
-    mass : float, optional
-        Mass of the cluster in solar masses
-    custom_params : dict, optional
-        Additional custom parameters to override defaults
-        (cluster params like ra/dec/redshift/mass can be provided here too)
-        
-    Returns
-    -------
-    dict
-        Dictionary containing model and spectrum parameter dictionaries
-        with fixed hyperparameters and any provided cluster parameters
-        
-    Examples
-    --------
-    >>> # Get only fixed hyperparameters
-    >>> params = get_models('a10_up')
-    
-    >>> # Provide cluster-specific parameters
-    >>> params = get_models('a10_up', ra=74.92, dec=-49.78, redshift=1.71, mass=2.5e14)
-    
-    >>> # Or via custom_params
-    >>> params = get_models('a10_up', custom_params={'ra': 74.92, 'dec': -49.78, 'redshift': 1.71, 'mass': 2.5e14})
-    
-    >>> # Use with PlotManager
-    >>> pm.add_model(source_type='parameters', **params)
-    """
-    
-    # Load configuration
     config = load_pressure_profiles()
-    
     if proftype not in config['profiles']:
         available = list(config['profiles'].keys())
         raise ValueError(f"Unknown profile type '{proftype}'. Available: {available}")
-    
-    profile_config = config['profiles'][proftype].copy()
-    
-    # Add cluster-specific parameters if provided (positional args take precedence)
-    cluster_params: Dict[str, Any] = {}
-    if ra is not None:
-        cluster_params['ra'] = ra
-    if dec is not None:
-        cluster_params['dec'] = dec
-    if redshift is not None:
-        cluster_params['redshift'] = redshift
-    if mass is not None:
-        cluster_params['mass'] = mass
 
-    # Apply custom parameters if provided
+    cluster_defaults = config.get('cluster_defaults', {})
+    profile_config = config['profiles'][proftype].copy()
+
+    # Start building merged dict
+    merged_cluster: Dict[str, Any] = {}
+    merged_cluster.update(cluster_defaults)
+
+    # Populate from profile-specific overrides if they exist (rare)
+    # (e.g., bias or concentration differences already inside profile_config)
+    # Concentration is handled separately below when building model parameters.
+
+    # Collect cluster params from custom_params
     if custom_params:
-        # Extract cluster params from custom_params if not already set via explicit args
+        # Accept alternative case keys
         for k_src, k_dst in (
             ('ra', 'ra'), ('RA', 'ra'),
             ('dec', 'dec'), ('Dec', 'dec'),
             ('redshift', 'redshift'), ('z', 'redshift'),
-            ('mass', 'mass'),
+            ('mass', 'mass'), ('M500', 'mass'),
+            ('log10_m500', 'log10_m500'), ('log10', 'log10_m500'),
+            ('bias', 'bias'), ('e', 'e'), ('ellipticity', 'e'),
+            ('angle', 'angle'), ('Angle', 'angle'),
+            ('offset', 'offset'), ('Offset', 'offset'),
+            ('temperature', 'temperature'), ('Temperature', 'temperature'),
+            ('depth', 'depth'),
         ):
-            if k_dst not in cluster_params and k_src in custom_params:
-                cluster_params[k_dst] = custom_params[k_src]
-        
-        # Merge any other overrides into the profile config (e.g., concentration/parameters)
-        profile_config = _merge_configs(profile_config, custom_params)
-    
-    # Build parameter arrays
+            if k_src in custom_params:
+                merged_cluster[k_dst] = custom_params[k_src]
+
+    # Override with explicit arguments
+    if ra is not None: merged_cluster['ra'] = ra
+    if dec is not None: merged_cluster['dec'] = dec
+    if redshift is not None: merged_cluster['redshift'] = redshift
+    if mass is not None: merged_cluster['mass'] = mass
+
+    # Derive / normalize naming (mass is single source of truth)
+    if 'mass' in merged_cluster and merged_cluster['mass'] is not None:
+        merged_cluster['mass'] = float(merged_cluster['mass'])
+        merged_cluster['log10_m500'] = np.log10(merged_cluster['mass'])
+    elif 'log10_m500' in merged_cluster:
+        merged_cluster['log10_m500'] = float(merged_cluster['log10_m500'])
+        merged_cluster['mass'] = 10 ** merged_cluster['log10_m500']
+        # Recompute to avoid rounding drift
+        merged_cluster['log10_m500'] = np.log10(merged_cluster['mass'])
+
     model_params = _build_model_parameters(profile_config, profgeom)
     spectrum_params = _build_spectrum_parameters(profile_config)
-    
-    # Add cluster parameters to model_params if provided
-    if cluster_params:
-        model_params.update(cluster_params)
-    
+
+    # Attach cluster params
+    model_params.update(merged_cluster)
+
     return {
         'model': model_params,
         'spectrum': spectrum_params
@@ -175,19 +144,18 @@ def _build_model_parameters(profile_config: Dict, profgeom: str) -> Dict[str, An
 
 def _build_a10_parameters(concentration, params):
     """Build A10 pressure profile parameters - only fixed hyperparameters."""
-    
-    # Apply cosmology scaling for A10 universal profile if needed
-    p_norm = params['p_norm']
-    if 'alpha_p' in params and params['alpha_p'] > 0:  # Universal profile
+    p_norm = params.get('p_norm', params.get('p0'))
+    if p_norm is None:
+        raise ValueError("A10 profile requires 'p_norm' (or alias 'p0') in YAML parameters")
+    if 'alpha_p' in params and params['alpha_p'] > 0:  # Universal-like evolutionary scaling
         p_norm = p_norm * ((cosmo.H0.value / 70.0) ** (-3.0/2.0))
-    
     return {
-        'concentration': concentration,
+        'concentration': params.get('c500', concentration),  # allow c500 override inside parameters
         'alpha': params['alpha'],
         'beta': params['beta'],
         'gamma': params['gamma'],
         'p_norm': p_norm,
-        'alpha_p': params['alpha_p'],
+        'alpha_p': params.get('alpha_p', 0.0),
         'type': 'A10Pressure'
     }
 

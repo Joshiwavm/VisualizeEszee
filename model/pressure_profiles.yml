@@ -1,6 +1,15 @@
-# Pressure profile hyperparameters for different SZ cluster models
-# This file defines only the fixed hyperparameters for various pressure profiles
-# RA, Dec, redshift, and mass must be provided by the user
+
+cluster_defaults:
+  ra: 0.0               # degrees
+  dec: 0.0              # degrees
+  redshift: 1.0
+  mass: 1.0e14          # M500 (solar masses)
+  bias: 0.0             # (1-b) mass bias (set 0.2 for 20% bias, etc.)
+  e: 0.0                # ellipticity (0 = circular)
+  angle: 0.0            # position angle (deg)
+  offset: 0.0           # additive offset
+  temperature: 0.0      # keV (not yet used in pressure models)
+  depth: null           # only used for A10PressureLS variant
 
 # Profile-specific parameters
 profiles:
@@ -8,12 +17,12 @@ profiles:
   a10_up:  # Universal profile
     model_type: A10Pressure
     spectrum_type: tSZ
-    concentration: 1.177
+    concentration: 1.177   # c500
     parameters:
       alpha: 1.051
       beta: 5.4905
       gamma: 0.3081
-      p_norm: 8.403  # Will be scaled by (H0/70)^(-3/2)
+      p_norm: 8.403        # P0 normalization; also accepted as p0
       alpha_p: 0.12
       
   a10_cc:  # Cool core
@@ -26,7 +35,7 @@ profiles:
       gamma: 0.7736
       p_norm: 3.249
       alpha_p: -0.1
-      
+
   a10_md:  # Morphologically disturbed
     model_type: A10Pressure
     spectrum_type: tSZ
