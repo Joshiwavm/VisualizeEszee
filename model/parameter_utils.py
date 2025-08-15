@@ -18,7 +18,7 @@ def load_brightness_models() -> Dict[str, Any]:
         raise FileNotFoundError(f"Brightness models config not found: {path}")
     with open(path, 'r') as f:
         return yaml.safe_load(f)
--
+
 
 def load_spectral_models() -> Dict[str, Any]:
     path = Path(__file__).parent / "spectral_models.yml"

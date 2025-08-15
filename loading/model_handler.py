@@ -137,8 +137,7 @@ class ModelHandler:
                         self.models[name]['type'], 
                         self.models[name]['parameters'], 
                         ra_map, dec_map, header
-                    )
-                    
+                    )  
                 elif self.models[name]['source'] == 'pickle':
                     quantile_type = kwargs.get('quantile_type', '50th')
                     n_samples = kwargs.get('n_samples', 100)
