@@ -188,33 +188,11 @@ class PlotRadialDistributions:
         return UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, UVdist_sorted[bins], bin_cs
 
     def plot_radial_distributions(self, nbins=20, save_plots=True, output_dir='../plots/uvplots/', 
-                                custom_phase_center=None, use_style=True, **kwargs):
+                                custom_phase_center=None, use_style=True, data_name: str | None = None, **kwargs):
         """
-        Plot radial UV distributions for all loaded datasets.
-        
-        Parameters
-        ----------
-        nbins : int or list, optional
-            Number of bins for radial averaging (default: 20). 
-            Can be a single integer applied to all datasets, or a list with one value per dataset.
-        save_plots : bool, optional
-            Whether to save plots to disk (default: True)
-        output_dir : str, optional
-            Directory to save plots (default: '../plots/uvplots/')
-        custom_phase_center : tuple, optional
-            Custom phase center (RA, Dec) in degrees to shift all fields to.
-            If None, uses automatically determined central field.
-            Example: (74.92689999995, -49.78720000002)
-        use_style : bool, optional
-            Whether to apply custom thesis style (default: True)
-        **kwargs : dict
-            Additional keyword arguments passed to matplotlib plotting functions.
-            Common options include:
-            - linewidth : float, line width for plots
-            - alpha : float, transparency
-            - markersize : float, marker size
-            - markeredgewidth : float, marker edge width
-            - capsize : float, error bar cap size
+        Plot radial UV distributions.
+
+        If data_name is provided, only that dataset is plotted; otherwise all datasets.
         """
         # Setup plot style if requested
         if use_style:
@@ -223,8 +201,15 @@ class PlotRadialDistributions:
         if save_plots and not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
+        # Select datasets
+        if data_name is not None:
+            if data_name not in self.uvdata:
+                raise ValueError(f"Dataset '{data_name}' not found. Available: {[k for k in self.uvdata if k!='metadata']}")
+            dataset_names = [data_name]
+        else:
+            dataset_names = [name for name in self.uvdata if name != 'metadata']
+
         # Handle nbins as single value or list
-        dataset_names = [name for name in self.uvdata if name != 'metadata']
         if isinstance(nbins, (int, float)):
             nbins_list = [int(nbins)] * len(dataset_names)
         elif isinstance(nbins, (list, tuple)):
@@ -263,7 +248,7 @@ class PlotRadialDistributions:
         axes[0].legend(frameon=True, loc='lower right')
         
         if save_plots:
-            filename = f'UVradial_data_combined.png'
+            filename = 'UVradial_data_combined.png' if data_name is None else f'UVradial_{data_name}.png'
             plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
             print(f"Saved plot: {output_dir}/{filename}")
         
