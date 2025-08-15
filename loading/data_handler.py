@@ -82,6 +82,7 @@ class DataHandler:
                 'fields': fields,
                 'spws': spws_nested,  # Store the normalized nested structure
                 'inpvis': inpvis,
+                'binvis': binvis,
             }
             self.uvdata[name]['metadata'] = metadata
             print(f"Data loaded successfully for dataset '{name}' with {len(fields)} field(s)")

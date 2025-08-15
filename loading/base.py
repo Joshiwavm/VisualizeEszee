@@ -1,6 +1,7 @@
 from .data_handler import DataHandler
 from .model_handler import ModelHandler
 from ..plot import PlotGatherer
+import warnings
 
 class PlotManager(DataHandler, ModelHandler, PlotGatherer):
     """
@@ -8,11 +9,62 @@ class PlotManager(DataHandler, ModelHandler, PlotGatherer):
     Inherits from all specialized classes to provide a unified interface.
     """
     def __init__(self, target=None):
-        """
-        Initialize with optional target name. 
-        """
+        """Initialize with optional target name."""
         self.target = target
-        
-        # Initialize all parent classes
         DataHandler.__init__(self)
         ModelHandler.__init__(self)
+        self._matched_models = {}
+
+    # ------------------------------------------------------------------
+    def _match_single(self, model_name: str, data_name: str, FFT: bool, notes=None):
+        if model_name not in self.models:
+            raise ValueError(f"Model '{model_name}' not found. Available: {list(self.models.keys())}")
+        if data_name not in self.uvdata:
+            raise ValueError(f"Data set '{data_name}' not found. Available: {list(self.uvdata.keys())}")
+        meta = self.uvdata[data_name].get('metadata', {})
+        if meta.get('obstype','').lower() != 'interferometer':
+            return None
+        model_info = self.models[model_name]
+        if data_name not in model_info:
+            model_info[data_name] = {
+                'band': meta.get('band'),
+                'array': meta.get('array'),
+                'fields': meta.get('fields'),
+                'spws': meta.get('spws'),
+                'binvis': meta.get('binvis')
+            }
+            self.add_model_maps(model_name, dataset_name=data_name)
+        assoc = {
+            'data': data_name,
+            'FFT_requested': FFT,
+            'status': 'fourier_pending' if FFT else 'image_only',
+            'notes': notes
+        }
+        self._matched_models.setdefault(model_name, {})[data_name] = assoc
+
+    # ------------------------------------------------------------------
+    def match_model(self, model_name: str | None = None, data_name: str | None = None, FFT: bool = False, **kwargs):
+        """Match models to interferometer data sets (per-dataset map storage). Now returns nothing."""
+        notes = kwargs.get('notes')
+        model_list = list(self.models.keys()) if model_name is None else [model_name]
+        if not model_list:
+            raise ValueError("No models available to match.")
+        # Helper
+        def is_interf(d):
+            return self.uvdata[d].get('metadata', {}).get('obstype','').lower() == 'interferometer'
+        # Build data list
+        if data_name is None:
+            data_list = [k for k in self.uvdata.keys() if is_interf(k)]
+        else:
+            if data_name not in self.uvdata:
+                raise ValueError(f"Data set '{data_name}' not found.")
+            data_list = [data_name] if is_interf(data_name) else []
+        if not data_list:
+            return  # nothing to do
+        for m in model_list:
+            for d in data_list:
+                try:
+                    self._match_single(m, d, FFT, notes=notes)
+                except Exception:
+                    # Suppress individual errors to continue matching others (could log if desired)
+                    pass
