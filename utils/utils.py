@@ -208,6 +208,12 @@ def arcsec2kpc(arcsec, z = 1.98):
 def kpc2arcsec(kpc, z = 1.98):
     return np.rad2deg((kpc/ cosmo.angular_diameter_distance(z).to(u.kpc).value))*3600
 
+
+
+
+
+
+
 def get_samples(filename, major=[None], flux=[None]):
     """
     Load nested sampling results and extract quantiles.
@@ -232,37 +238,3 @@ def get_samples(filename, major=[None], flux=[None]):
     edges = np.array([corner.quantile(samples[:,r], [0.16, 0.50, 0.84], weights=weights) 
                      for r in range(samples.shape[1])])    
     return edges
-
-def get_A10params(proftype, RA, Dec, z, Mass):
-    if  proftype[-3:]=='_cc': # cool core
-        alpha = 2.3000E+00; beta = 3.3400E+00; gamma =  0.2100E+00
-        pnorm = 3.7000E+00; c500 = 2.8000E+00; ap    = -1.0000E-01
-        pnorm*= 1.026
-    elif proftype[-3:]=='_md': # morphologically disturbed
-        alpha = 1.7000E+00; beta = 5.7400E+00; gamma =  0.0500E+00
-        pnorm = 3.9100E+00; c500 = 1.5000E+00; ap    = -1.0000E-01
-        pnorm*= 1.043
-    elif proftype[-3:]=='_up': # universal profile
-        alpha = 2.2700E+00; beta = 3.4800E+00; gamma =  0.1500E+00
-        pnorm = 3.4700E+00; c500 = 2.5900E+00; ap    = -1.0000E-01
-        pnorm*= 1.034
-        
-    popt = {'RA':          RA, 
-            'Dec':         Dec, 
-            'log10':       Mass, 
-            'c500':        c500, 
-            'e':           0.0, 
-            'Angle':       0.0, 
-            'Offset':      0.0, 
-            'Temperature': 0.0, 
-            'Alpha':       alpha, 
-            'Beta':        beta, 
-            'Gamma':       gamma, 
-            'P0':          pnorm, 
-            'Alpha_p':     ap, 
-            'z':           z, 
-            'bias':        0.0
-            }
-           
-    
-    return popt
