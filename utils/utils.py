@@ -23,6 +23,17 @@ global mec2; mec2 = ((const.m_e*const.c*const.c).to(u.keV)).value
 global clight; clight = const.c.value
 global kboltz; kboltz = const.k_B.value
 global hplanck; hplanck = const.h.value
+global ysznorm; ysznorm = (const.sigma_T/const.m_e/const.c**2).to(u.cm**3/u.keV/u.Mpc)
+
+def calculate_r500(mass, redshift):
+    """Calculate R500 in kpc for given mass (M500 in solar masses) and redshift.
+    Uses the cosmology imported here (Planck15) for consistency with utils.
+    """
+    rho_crit = cosmo.critical_density(redshift)  # mass density (Quantity)
+    mass_kg = (mass * u.M_sun).to(u.kg)
+    volume = mass_kg / (500 * rho_crit * (4.0/3.0) * np.pi)
+    r500 = (volume) ** (1/3)
+    return r500.to(u.kpc).value
 
 # Adimensional frequency
 # ----------------------------------------------------------------------

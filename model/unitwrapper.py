@@ -32,8 +32,6 @@ class TransformInput:
             return self._a10_pressure(base)
         if self.model_type == 'gnfwPressure':
             return self._gnfw_pressure(base)
-        if self.model_type == 'betaPressure':
-            return self._beta_pressure(base)
         return base
 
     # --- Helpers ---
@@ -95,17 +93,11 @@ class TransformInput:
         alpha = self._first('alpha')
         beta = self._first('beta')
         gamma = self._first('gamma')
-        ang_deg = self._angular_scale_deg()
-        major_mpc = None
-        if z is not None and ang_deg is not None:
-            major_mpc = (np.deg2rad(float(ang_deg)) * cosmo.angular_diameter_distance(float(z)).to(u.Mpc)).value
-        return {**base, 'amp': 1.0, 'major': major_mpc, 'alpha': alpha, 'beta': beta, 'gamma': gamma, 'phys_norm': False}
+        r_s = self._first('r_s','theta_s_deg')
+        p_amp = self._first('p_norm','p0','p_0','P_0')
 
-    def _beta_pressure(self, base: Dict[str, Any]) -> Dict[str, Any]:
-        z = self._first('redshift', 'z')
-        beta_val = self._first('beta')
-        ang_deg = self._angular_scale_deg()
-        major_mpc = None
-        if z is not None and ang_deg is not None:
-            major_mpc = (np.deg2rad(float(ang_deg)) * cosmo.angular_diameter_distance(float(z)).to(u.Mpc)).value
-        return {**base, 'amp': 1.0, 'major': major_mpc, 'beta': beta_val, 'phys_norm': False}
+        z, alpha, beta, gamma, r_s, p_amp = map(float, (z, alpha, beta, gamma, r_s, p_amp))
+        
+        r_s_mpc = (np.deg2rad(r_s) * cosmo.angular_diameter_distance(z).to(u.Mpc)).value
+
+        return {**base, 'amp': p_amp, 'major': r_s_mpc, 'alpha': alpha, 'beta': beta, 'gamma': gamma, 'phys_norm': True}

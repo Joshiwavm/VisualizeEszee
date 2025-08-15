@@ -4,7 +4,7 @@ from astropy.cosmology import Planck18 as cosmo
 from astropy import units as u
 from astropy import constants as const
 from ..model.models import *
-from ..model.transform import TransformInput
+from ..model.unitwrapper import TransformInput  # renamed from transform
 from ..utils import calculate_r500, ysznorm
 
 class ModelHandler:
@@ -65,7 +65,7 @@ class ModelHandler:
             filename = kwargs.get('filename', None)
             major_indices = kwargs.get('major_indices', [None])
             flux_indices = kwargs.get('flux_indices', [None])
-            
+             
             if filename is None:
                 raise ValueError("filename required for pickle source_type")
                 

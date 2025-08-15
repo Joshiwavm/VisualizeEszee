@@ -37,66 +37,90 @@ def get_models(dist_name: str, profgeom: str = 'sph',
                log10M: Optional[float] = None,
                custom_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Return merged model + spectrum parameter dictionaries for a distribution.
-    Precedence: explicit args > custom_params > distribution parameters > cluster_defaults.
-    log10M is the authoritative mass representation; mass is derived.
+    Precedence (highest last): cluster_defaults < distribution params < custom_params < explicit args.
+    Mass handling: log10M authoritative; derive other if only one given.
+    custom_params may include both cluster-level (ra, dec, redshift, mass, etc.) and model-level (p_norm, r_s, alpha, ...).
     """
     config = load_brightness_models()
     dists = config.get('distributions', {})
     if dist_name not in dists:
-        available = list(dists.keys())
-        raise ValueError(f"Unknown distribution '{dist_name}'. Available: {available}")
+        raise ValueError(f"Unknown distribution '{dist_name}'. Available: {list(dists.keys())}")
 
     cluster_defaults = config.get('cluster_defaults', {})
     dist_cfg = dists[dist_name]
 
+    # Start with cluster defaults
     merged_cluster: Dict[str, Any] = dict(cluster_defaults)
 
-    # Collect cluster params from custom_params (case-insensitive variants)
+    # Normalize custom params (case-insensitive keys) ---------------------------------
+    norm_cp: Dict[str, Any] = {}
     if custom_params:
-        for k_src, k_dst in (
-            ('ra', 'ra'), ('RA', 'ra'),
-            ('dec', 'dec'), ('Dec', 'dec'),
-            ('redshift', 'redshift'), ('z', 'redshift'),
-            ('log10M', 'log10M'), ('log10', 'log10M'), ('log10_m500', 'log10M'),
-            ('mass', 'mass'), ('M500', 'mass'),
-            ('bias', 'bias'),
-            ('e', 'e'), ('ellipticity', 'e'),
-            ('angle', 'angle'), ('Angle', 'angle'),
-            ('offset', 'offset'), ('Offset', 'offset'),
-            ('temperature', 'temperature'), ('Temperature', 'temperature'),
-            ('depth', 'depth'),
-        ):
-            if k_src in custom_params:
-                merged_cluster[k_dst] = custom_params[k_src]
+        for k, v in custom_params.items():
+            norm_cp[k.lower()] = v
 
-    # Override with explicit arguments
+    # Alias maps ----------------------------------------------------------------------
+    cluster_alias = {
+        'ra': 'ra', 'dec': 'dec', 'z': 'redshift', 'redshift': 'redshift',
+        'log10m': 'log10M', 'log10_m500': 'log10M', 'log10': 'log10M',
+        'mass': 'mass', 'm500': 'mass', 'bias': 'bias',
+        'e': 'e', 'ellipticity': 'e', 'angle': 'angle', 'offset': 'offset',
+        'temperature': 'temperature', 'depth': 'depth'
+    }
+    model_alias = {
+        'p_norm': 'p_norm', 'p0': 'p_norm', 'p_0': 'p_norm', 'p0norm': 'p_norm', 'p0_': 'p_norm', 'p\u2080': 'p_norm',
+        'r_s': 'r_s', 'theta_s_deg': 'r_s', 'theta_s': 'r_s', 'theta_s_arcmin': 'r_s_arcmin',
+        'alpha': 'alpha', 'beta': 'beta', 'gamma': 'gamma',
+        'alpha_p': 'alpha_p', 'ap': 'alpha_p',
+        'concentration': 'concentration', 'c500': 'concentration'
+    }
+
+    # Extract cluster-level from custom params
+    for k, v in norm_cp.items():
+        if k in cluster_alias:
+            merged_cluster[cluster_alias[k]] = v
+
+    # Explicit argument overrides (highest precedence for cluster-level)
     if ra is not None: merged_cluster['ra'] = ra
     if dec is not None: merged_cluster['dec'] = dec
     if redshift is not None: merged_cluster['redshift'] = redshift
     if log10M is not None: merged_cluster['log10M'] = float(log10M)
-    if mass is not None:  # allow direct mass override
+    if mass is not None:
         merged_cluster['mass'] = float(mass)
         merged_cluster['log10M'] = np.log10(merged_cluster['mass'])
 
-    # Harmonize mass/log10M (log10M authoritative)
-    if 'log10M' in merged_cluster and merged_cluster['log10M'] is not None:
+    # Harmonize mass / log10M
+    if merged_cluster.get('log10M') is not None:
         merged_cluster['log10M'] = float(merged_cluster['log10M'])
         merged_cluster['mass'] = 10.0 ** merged_cluster['log10M']
-    elif 'mass' in merged_cluster and merged_cluster['mass'] is not None:
+    elif merged_cluster.get('mass') is not None:
         merged_cluster['mass'] = float(merged_cluster['mass'])
         merged_cluster['log10M'] = np.log10(merged_cluster['mass'])
-    else:
-        # Neither provided; leave both absent (shape-only usage downstream)
-        pass
 
-    # Build model + spectrum parameter dictionaries
+    # Build base model + spectrum params from distribution ---------------------------
     model_params = _build_model_parameters(dist_cfg, profgeom)
     spectrum_params = _build_spectrum_parameters(dist_cfg)
 
-    # Attach cluster-level parameters
+    # Merge cluster into model params
     model_params.update(merged_cluster)
 
-    return { 'model': model_params, 'spectrum': spectrum_params }
+    # Apply model-level overrides from custom params ---------------------------------
+    for k, v in norm_cp.items():
+        if k in model_alias:
+            mk = model_alias[k]
+            # Special conversion for angular arcmin scale
+            if mk == 'r_s_arcmin':  # convert to degrees then store as r_s
+                try:
+                    v = float(v) / 60.0
+                except Exception:
+                    pass
+                mk = 'r_s'
+            if mk == 'concentration':
+                # Map to expected internal field names used by builders if present
+                model_params['concentration'] = v
+            else:
+                model_params[mk] = v
+
+    return {'model': model_params, 'spectrum': spectrum_params}
 
 # ------------------------------------------------------------------
 # Internal builders

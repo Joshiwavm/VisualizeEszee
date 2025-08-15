@@ -7,7 +7,7 @@ from ..model.parameter_utils import get_models
 from ..model.models import *
 from ..utils.style import setup_plot_style
 from ..utils import calculate_r500
-from ..model.transform import TransformInput
+from ..model.unitwrapper import TransformInput  # renamed from transform
 
 
 class PlotPressureProfiles:
