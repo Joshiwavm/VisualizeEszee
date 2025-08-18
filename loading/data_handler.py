@@ -31,7 +31,6 @@ class DataHandler:
             array = kwargs.get('array', None)
             fields = kwargs.get('fields', None)
             spws = kwargs.get('spws', None)
-            inpvis = kwargs.get('inpvis', None)
             binvis = kwargs.get('binvis', None)
 
             # Normalize fields to list
@@ -81,7 +80,6 @@ class DataHandler:
                 'array': array,
                 'fields': fields,
                 'spws': spws_nested,  # Store the normalized nested structure
-                'inpvis': inpvis,
                 'binvis': binvis,
             }
             self.uvdata[name]['metadata'] = metadata

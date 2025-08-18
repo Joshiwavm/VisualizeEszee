@@ -84,12 +84,6 @@ class PlotPressureProfiles:
                     input_par['amp'], 1.0, ecc,
                     input_par['alpha'], input_par['beta'], input_par['gamma']
                 )
-            elif model_type == 'betaPressure':
-                shape = betaProfile(
-                    rs, offset,
-                    input_par['amp'], 1.0, ecc,
-                    input_par['beta']
-                )
             else:
                 raise ValueError(f"Unknown pressure profile type: {model_type}")
             pressure_phys = np.interp(r_norm, rs, shape)
