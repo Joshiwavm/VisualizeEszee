@@ -108,22 +108,67 @@ class PlotManager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
     # ------------------------------------------------------------------
     # Inspection helper
     # ------------------------------------------------------------------
-    def dump_structure(self, model_name: str | None = None, data_name: str | None = None, *, depth: int = 3):
-        """Print nested keys for quick inspection.
-        depth: max depth to recurse (keys only)."""
-        import collections
-        def _recurse(obj, lvl, prefix):
-            if lvl > depth:
+    def dump_structure(self, model_name: str | None = None, data_name: str | None = None,
+                       *, depth: int | None = None, summarize_arrays: bool = True,
+                       max_list: int = 5):
+        """Print nested keys as an ASCII tree.
+
+        Parameters
+        ----------
+        model_name, data_name : optional filters
+        depth : int or None
+            Maximum depth to descend (None = unlimited).
+        summarize_arrays : bool
+            If True, show ndarray shape instead of full content.
+        max_list : int
+            Max elements to preview for list/tuple.
+        """
+        target = self.matched_models
+        if model_name is not None:
+            target = target.get(model_name, {})
+        if data_name is not None and isinstance(target, dict):
+            target = target.get(data_name, {})
+
+        def short_value(v):
+            import numpy as _np
+            if summarize_arrays and isinstance(v, _np.ndarray):
+                return f"ndarray shape={v.shape}" if v.ndim else f"ndarray len={len(v)}"
+            if isinstance(v, (list, tuple)):
+                show = v[:max_list]
+                more = '...' if len(v) > max_list else ''
+                return f"[{', '.join(map(str, show))}{more}]"
+            if isinstance(v, (int, float, str)):
+                s = str(v)
+                return s if len(s) < 40 else s[:37] + '...'
+            return type(v).__name__
+
+        lines = []
+        def recurse(obj, prefix: str, is_last: bool, level: int):
+            if depth is not None and level > depth:
                 return
             if isinstance(obj, dict):
-                for k, v in obj.items():
-                    print(f"{prefix}{k}")
-                    _recurse(v, lvl+1, prefix + '  ')
-        if model_name and data_name:
-            node = self.matched_models.get(model_name, {}).get(data_name, {})
-            _recurse(node, 1, '')
-        elif model_name:
-            node = self.matched_models.get(model_name, {})
-            _recurse(node, 1, '')
+                keys = list(obj.keys())
+                for i, k in enumerate(keys):
+                    v = obj[k]
+                    last = (i == len(keys)-1)
+                    branch = '`-' if last else '|-'
+                    if isinstance(v, dict):
+                        lines.append(f"{prefix}{branch} {k}")
+                        extend = '  ' if last else '| '
+                        recurse(v, prefix + extend, last, level+1)
+                    else:
+                        val_repr = short_value(v)
+                        lines.append(f"{prefix}{branch} {k}: {val_repr}")
+            else:
+                lines.append(f"{prefix}`- {short_value(obj)}")
+
+        # Root handling
+        if isinstance(target, dict):
+            if not target:
+                print('(empty)')
+                return
+            # If both model and data specified, start at that node without extra root label
+            recurse(target, '', True, 1)
         else:
-            _recurse(self.matched_models, 1, '')
+            recurse(target, '', True, 1)
+        print('\n'.join(lines))

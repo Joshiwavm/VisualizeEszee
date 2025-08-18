@@ -172,6 +172,7 @@ class FourierManager:
         uvrec = self.uvdata[data_name][field_key][spw_key]
         u, v = uvrec.uwave, uvrec.vwave
         real, imag, wgt = uvrec.uvreal, uvrec.uvimag, uvrec.suvwght
+        freq = uvrec.uvfreq  # added frequency array
         uv_entry = self.fft_map(model_name, data_name, field_key, spw_key)
         model_vis = self.sample_uv(uv_entry['uv'], u, v, uv_entry['du'])
         data_vis = real + 1j * imag
@@ -183,6 +184,7 @@ class FourierManager:
             'resid_vis': resid_vis,
             'u': u,
             'v': v,
+            'uvfreq': freq,
             'weights': wgt
         }
         return model_vis
