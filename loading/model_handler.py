@@ -144,6 +144,7 @@ class ModelHandler:
                 except Exception as e:
                     print(f"  Warning: Error loading primary beam: {e}")
                     pbeam_data = np.ones_like(model_map)
+                    
                 self.model_maps[name][dataset_name][field_key][spw_key] = {
                     'model_data': model_map,
                     'image_data': image_data,
