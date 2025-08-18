@@ -314,7 +314,7 @@ class PlotMaps:
         spws_sel = self._normalize_sel(spw)
         # Build list of (model_name, data_name) pairs to plot
         pairs = []
-        matched = getattr(self, '_matched_models', {})
+        matched = getattr(self, 'matched_models', {})
         if model_name and data_name:
             pairs = [(model_name, data_name)]
         elif model_name:
@@ -381,7 +381,7 @@ class PlotMaps:
         spws_sel = self._normalize_sel(spw)
         # Determine pairs
         pairs = []
-        matched = getattr(self, '_matched_models', {})
+        matched = getattr(self, 'matched_models', {})
         if model_name and data_name:
             pairs = [(model_name, data_name)]
         elif model_name:

@@ -9,13 +9,11 @@ from ..utils.utils import *
 UVData = namedtuple('UVData', ['uwave', 'vwave', 'uvreal', 'uvimag', 'suvwght', 'uvfreq'])
 
 class DataHandler:
-    """
-    Handles loading and storing of ALMA uv-data and ACT data.
-    """
+    """Handles loading and storing of ALMA uv-data and ACT data via self.data dict."""
     def __init__(self):
-        """Initialize data storage containers."""
-        self.uvdata = {}  
-        self.actdata = {}
+        # Expect PlotManager to have initialized self.data; fallback if used standalone
+        if not hasattr(self, 'data'):
+            self.data = {'uv': {}, 'act': {}}
 
     def add_data(self, name, obstype, **kwargs):
         """
@@ -72,7 +70,7 @@ class DataHandler:
                     phase_center = (ra, dec)
                 uvdata[f'field{field}'][f'phase_center'] = phase_center
 
-            self.uvdata[name] = uvdata
+            self.data['uv'][name] = uvdata
 
             metadata = {
                 'obstype': obstype,
@@ -82,7 +80,7 @@ class DataHandler:
                 'spws': spws_nested,  # Store the normalized nested structure
                 'binvis': binvis,
             }
-            self.uvdata[name]['metadata'] = metadata
+            self.data['uv'][name]['metadata'] = metadata
             print(f"Data loaded successfully for dataset '{name}' with {len(fields)} field(s)")
                 
 
@@ -117,10 +115,10 @@ class DataHandler:
                         norm = 1.0
                     std = np.mean(data_image) ** -0.5 * norm / npix
                     actdata[freq][arr] = actdata[freq][arr]._replace(std=std)
-            self.actdata[name] = actdata
+            self.data['act'][name] = actdata
 
-            if 'metadata' not in self.actdata[name]:
-                self.actdata[name]['metadata'] = {
+            if 'metadata' not in self.data['act'][name]:
+                self.data['act'][name]['metadata'] = {
                     'obstype': obstype,
                     'fdir': fdir,
             }

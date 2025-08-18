@@ -9,9 +9,6 @@ from ..utils import calculate_r500, ysznorm
 
 class ModelHandler:
     """Handles model creation and sky map generation."""
-    def __init__(self):
-        self.models = {}
-        self.model_maps = {}
 
     def add_model(self, name, source_type, model_type=None, parameters=None,
                   band=None, array=None, fields=None, spws=None, binvis=None, data_name: str = None, **kwargs):
@@ -73,8 +70,6 @@ class ModelHandler:
                 'binvis': binvis,
             }
             self.add_model_maps(name, dataset_name=key, **kwargs)
-        else:
-            self.model_maps.setdefault(name, {})
         return self.models[name]
 
     def add_model_maps(self, name: str, dataset_name: str, **kwargs):
@@ -89,11 +84,10 @@ class ModelHandler:
         spws_nested = dmeta.get('spws')
         if fields is None or spws_nested is None:
             raise ValueError(f"Model '{name}' dataset '{dataset_name}' missing fields/spws; cannot build maps.")
-        self.model_maps.setdefault(name, {})
-        self.model_maps[name].setdefault(dataset_name, {})
+        maps = {}
         for f, field in enumerate(fields):
             field_key = f'field{field}'
-            self.model_maps[name][dataset_name].setdefault(field_key, {})
+            maps.setdefault(field_key, {})
             for spw in spws_nested[f]:
                 spw_key = f'spw{spw}'
                 binvis = dmeta.get('binvis')
@@ -102,7 +96,6 @@ class ModelHandler:
                 else:
                     fits_file = f"output/{dmeta.get('array')}/output_{dmeta.get('band')}_{dmeta.get('array')}.im.field-{field}.spw-{spw}.image.fits"
                 try:
-                    from astropy.io import fits
                     with fits.open(fits_file) as hdul:
                         header = hdul[0].header.copy()
                         image_data = hdul[0].data.copy()
@@ -112,7 +105,6 @@ class ModelHandler:
                 except FileNotFoundError:
                     print(f"  Warning: FITS file not found: {fits_file}")
                     continue
-                import numpy as np
                 x_coords = np.arange(-nx/2, nx/2, 1.) + 0.5
                 y_coords = np.arange(-ny/2, ny/2, 1.) - 0.5
                 X, Y = np.meshgrid(x_coords, y_coords)
@@ -144,8 +136,7 @@ class ModelHandler:
                 except Exception as e:
                     print(f"  Warning: Error loading primary beam: {e}")
                     pbeam_data = np.ones_like(model_map)
-                    
-                self.model_maps[name][dataset_name][field_key][spw_key] = {
+                maps[field_key][spw_key] = {
                     'model_data': model_map,
                     'image_data': image_data,
                     'header': header,
@@ -153,8 +144,7 @@ class ModelHandler:
                     'dec_map': dec_map,
                     'pb_map': pbeam_data
                 }
-
-
+        return maps
 
     def _generate_model_from_parameters(self, model_type, parameters, ra_map, dec_map, header,
                                         rs = np.append(0.0, np.logspace(-5, 5, 100))):
