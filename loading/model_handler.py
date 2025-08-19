@@ -20,7 +20,9 @@ class ModelHandler:
         """
         if source_type not in ('parameters', 'pickle'):
             raise ValueError("source_type must be 'parameters' or 'pickle'")
+        
         immediate_maps = all(v is not None for v in (band, array, fields, spws))
+        
         spws_nested = None
         if immediate_maps:
             if not isinstance(fields, list):
@@ -33,6 +35,7 @@ class ModelHandler:
                 spws_nested = spws
             if len(spws_nested) != len(fields):
                 raise ValueError(f"Length of spws ({len(spws_nested)}) must match length of fields ({len(fields)})")
+        
         # Core model record
         if source_type == 'parameters':
             if model_type is None:
@@ -44,6 +47,7 @@ class ModelHandler:
                 'type': model_type,
                 'parameters': parameters,
             }
+        
         else:
             filename = kwargs.get('filename')
             if filename is None:
@@ -59,6 +63,7 @@ class ModelHandler:
                 'major_indices': major_indices,
                 'flux_indices': flux_indices,
             }
+
         # Attach immediate spatial metadata under chosen key
         if immediate_maps:
             key = data_name if data_name else '__legacy__'
@@ -70,20 +75,17 @@ class ModelHandler:
                 'binvis': binvis,
             }
             self.add_model_maps(name, dataset_name=key, **kwargs)
+
         return self.models[name]
 
     def add_model_maps(self, name: str, dataset_name: str, **kwargs):
         """Build model maps for model[name][dataset_name] (fields/spws level)."""
+        
         model_info = self.models.get(name)
-        if not model_info:
-            raise ValueError(f"Model '{name}' not registered.")
         dmeta = model_info.get(dataset_name)
-        if dmeta is None:
-            raise ValueError(f"Dataset '{dataset_name}' metadata missing for model '{name}'.")
         fields = dmeta.get('fields')
         spws_nested = dmeta.get('spws')
-        if fields is None or spws_nested is None:
-            raise ValueError(f"Model '{name}' dataset '{dataset_name}' missing fields/spws; cannot build maps.")
+
         maps = {}
         for f, field in enumerate(fields):
             field_key = f'field{field}'
@@ -126,16 +128,15 @@ class ModelHandler:
                             model_info, quantile_type, ra_map, dec_map, header
                         )
                 pbeam_file = fits_file.replace('.image.fits', '.pbeam.fits')
+
                 try:
                     with fits.open(pbeam_file) as pbeam_hdul:
                         pbeam_data = pbeam_hdul[0].data
                         model_map = model_map * pbeam_data
-                except FileNotFoundError:
-                    print(f"  Warning: Primary beam file not found: {pbeam_file}")
-                    pbeam_data = np.ones_like(model_map)
                 except Exception as e:
                     print(f"  Warning: Error loading primary beam: {e}")
                     pbeam_data = np.ones_like(model_map)
+
                 maps[field_key][spw_key] = {
                     'model_data': model_map,
                     'image_data': image_data,
@@ -152,12 +153,6 @@ class ModelHandler:
 
         xform = TransformInput(parameters['model'], model_type)
         input_par = xform.generate()
-        
-        r_grid = self._make_radial_grid(ra_map, dec_map, parameters['model'])
-
-        z = parameters['model'].get('redshift', parameters['model'].get('z'))
-        r_phys_mpc = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(z).to(u.Mpc).value
-        coord = r_phys_mpc / input_par.get('major')
 
         rs_sample = rs[1:] if model_type == 'gnfwPressure' else rs
 
@@ -189,9 +184,13 @@ class ModelHandler:
                                 input_par.get('major'), 
                                 input_par.get('e'), 
                                 input_par['beta'])
-        else:
-            return np.zeros_like(r_grid)
-
+        
+        r_grid = self._make_radial_grid(ra_map, dec_map, parameters['model'])
+        
+        z = parameters['model'].get('redshift', parameters['model'].get('z'))
+        r_phys_mpc = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(z).to(u.Mpc).value
+        coord = r_phys_mpc / input_par.get('major')
+        
         model_map = np.interp(coord, rs_sample, profile, left=profile[0], right=profile[-1])
         model_map = model_map * ysznorm
 

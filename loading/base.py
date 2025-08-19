@@ -3,6 +3,9 @@ from .model_handler import ModelHandler
 from ..plot import PlotGatherer
 from ..fourier import FourierManager
 import warnings
+import os
+import numpy as np
+from astropy.io import fits
 
 class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
     """
@@ -56,7 +59,7 @@ class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
     # ------------------------------------------------------------------
     # Matching: always (re)build Fourier products (no flags)
     # ------------------------------------------------------------------
-    def _match_single(self, model_name: str, data_name: str, notes=None):
+    def _match_single(self, model_name: str, data_name: str, notes=None, save_output=None):
         meta = self.uvdata[data_name].get('metadata', {})
         if meta.get('obstype','').lower() != 'interferometer':
             return None
@@ -82,9 +85,11 @@ class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
             for spw in spws_nested[f]:
                 spw_key = f'spw{spw}'
                 self.map_to_vis(model_name, data_name, field_key, spw_key)
+                if save_output is not None:
+                    self._save_match_outputs(model_name, data_name, field_key, spw_key, assoc, save_output)
         assoc['status'] = 'fourier_ready'
 
-    def match_model(self, model_name: str | None = None, data_name: str | None = None, *, notes=None):
+    def match_model(self, model_name: str | None = None, data_name: str | None = None, *, notes=None, save_output=None):
         model_list = list(self.models.keys()) if model_name is None else [model_name]
         if not model_list:
             raise ValueError("No models available to match.")
@@ -100,7 +105,48 @@ class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
             return
         for m in model_list:
             for d in data_list:
-                self._match_single(m, d, notes=notes)
+                self._match_single(m, d, notes=notes, save_output=save_output)
+
+    # ------------------------------------------------------------------
+    # Output writer helper
+    # ------------------------------------------------------------------
+    def _save_match_outputs(self, model_name, data_name, field_key, spw_key, assoc, save_output):
+        os.makedirs(save_output, exist_ok=True)  # ensure output root exists
+
+        # Map & vis entries
+        entry = assoc['maps'][field_key][spw_key]
+        sm_entry = assoc['sampled_model'][field_key][spw_key]
+        header = entry['header'].copy()
+
+        # Recover Compton-y (remove PB attenuation)
+        plane_pb = self._extract_plane(entry['model_data'])  # (y * PB)
+        pb_map = entry.get('pb_map')
+        with np.errstate(divide='ignore', invalid='ignore'):
+            y_map = np.where(pb_map > 0, plane_pb / pb_map, 0.0)
+
+        # Write Compton-y FITS
+        header_y = header.copy(); header_y['BUNIT'] = 'Compton-y'
+        print(f"Writing Compton-y map to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_y.fits')}")
+        fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_y.fits"), y_map.astype(np.float32), header=header_y, overwrite=True)
+
+        # Build dirty images (model & residual) from visibilities
+        uvrec = self.uvdata[data_name][field_key][spw_key]
+        u = uvrec.uwave; v = uvrec.vwave; w = uvrec.suvwght
+        model_vis = sm_entry['model_vis']; resid_vis = sm_entry['resid_vis']
+        pix_deg = abs(header.get('CDELT1') or header.get('CD1_1'))
+        npix = plane_pb.shape[0]
+        dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
+        dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
+
+        # Write dirty images (Jy/beam)
+        header_dm = header.copy(); header_dm['BUNIT'] = 'Jy/beam'
+        header_dr = header.copy(); header_dr['BUNIT'] = 'Jy/beam'
+
+        print(f"Writing dirty model to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits')}")
+        print(f"Writing dirty residual to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits')}")
+
+        fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits"), dirty_model.astype(np.float32), header=header_dm, overwrite=True)
+        fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits"), dirty_resid.astype(np.float32), header=header_dr, overwrite=True)
 
     # ------------------------------------------------------------------
     # Inspection helper

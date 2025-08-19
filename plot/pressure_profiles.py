@@ -46,13 +46,10 @@ class PlotPressureProfiles:
         
         for model_name in model_names:
             model_info = self.models[model_name]
-            if model_info['source'] != 'parameters':
-                raise ValueError("Pressure profiles only supported for 'parameters' source type")
 
             model_params = model_info['parameters']['model']
             model_type = model_params.get('type')
-            if model_type not in ('A10Pressure','gnfwPressure','betaPressure'):
-                continue
+    
             z = model_params.get('redshift', model_params.get('z'))
 
             r_min, r_max = r_range
@@ -68,6 +65,7 @@ class PlotPressureProfiles:
 
             # base rs grid as in model_handler (append(0, logspace(-5,5,100)))
             rs_grid = np.append(0.0, np.logspace(-5, 5, 200))
+            
             rs_sample = rs_grid[1:] if model_type == 'gnfwPressure' else rs_grid
 
             if model_type == 'A10Pressure':

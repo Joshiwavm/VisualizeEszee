@@ -2,18 +2,17 @@ from __future__ import annotations
 
 # Standard library
 import os
-import warnings
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 # Third-party
 import numpy as np
 from matplotlib import pyplot as plt
+from astropy.convolution import Gaussian2DKernel, convolve  # retained if future smoothing needed
 from matplotlib.patches import Ellipse
-from astropy.wcs import WCS, FITSFixedWarning
-from astropy.convolution import Gaussian2DKernel, convolve
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Local
-from ..utils.utils import ytszToJyPix, JyBeamToJyPix
+from ..utils.utils import JyBeamToJyPix
 from ..utils.style import setup_plot_style
 
 
@@ -37,14 +36,6 @@ class PlotMaps:
         return a
 
     @staticmethod
-    def _freq_from_header(header) -> float:
-        """Extract observing frequency in Hz from FITS header."""
-        for key in ("RESTFRQ", "CRVAL3"):
-            if key in header and header[key] not in (0, None):
-                return header[key]
-        raise ValueError("Frequency not found (need RESTFRQ or CRVAL3).")
-
-    @staticmethod
     def _pixel_scale_deg(header) -> Tuple[float, float]:
         """Return absolute pixel scale (deg) along RA/Dec axes."""
         cd1 = header.get("CDELT1") or header.get("CD1_1")
@@ -53,361 +44,177 @@ class PlotMaps:
             raise ValueError("Pixel scale not found (CDELT1/2 or CD*_*).")
         return abs(cd1), abs(cd2)
 
-    @classmethod
-    def _y_to_jy_per_beam(cls, y_map: np.ndarray, header, freq_hz: Optional[float] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """Convert a Compton-y 2D map to Jy/beam (or Jy/pixel if beam absent)."""
-        if freq_hz is None:
-            freq_hz = cls._freq_from_header(header)
-        ipix_deg, jpix_deg = cls._pixel_scale_deg(header)
-        jy_pix = -1* y_map * ytszToJyPix(freq_hz, ipix_deg, jpix_deg)
-        bmaj = header.get("BMAJ")
-        bmin = header.get("BMIN")
-        if not bmaj or not bmin:
-            return jy_pix, {"unit": "Jy/pixel"}
-        conv = JyBeamToJyPix(ipix_deg, jpix_deg, bmaj, bmin)
-        jy_beam = jy_pix / conv
-        return jy_beam, {"unit": "Jy/beam", "pix_per_beam_factor": 1 / conv}
-
-    def _resolve_map_selection(self, model_name: Optional[str]):
-        if not hasattr(self, "model_maps") or not self.model_maps:
-            raise ValueError("No model maps available. Use match_model() to generate them.")
-        model_name = model_name or next(iter(self.model_maps))
-        if model_name not in self.model_maps:
-            raise ValueError(f"Model name '{model_name}' not found. Available: {list(self.model_maps)}")
-        model_entry = self.model_maps[model_name]
-        if not model_entry:
-            raise ValueError(f"Model '{model_name}' has no map entries. Call match_model().")
-        dataset_name = next(iter(model_entry))
-        ds_entry = model_entry[dataset_name]
-        field_key = next((k for k in ds_entry if k.startswith('field')), None)
-        if field_key is None:
-            raise ValueError(f"No field entries for model '{model_name}' dataset '{dataset_name}'.")
-        spw_dict = ds_entry[field_key]
-        spw_key = next((k for k in spw_dict if k.startswith('spw')), None)
-        if spw_key is None:
-            raise ValueError(f"No spw entries for model '{model_name}' dataset '{dataset_name}' field '{field_key}'.")
-        return spw_dict[spw_key], model_name, dataset_name
-
-    @staticmethod
-    def _safe_wcs(header, suppress: bool = True):
-        """Create a WCS object suppressing Astropy FITSFixedWarning if requested."""
-        if suppress:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", FITSFixedWarning)
-                return WCS(header)[0, 0]
-        return WCS(header)[0, 0]
-
-    @staticmethod
-    def _add_beam(ax, header, shape: Tuple[int, int], ipix_deg: float, jpix_deg: float, show: bool = True) -> None:
-        """Overlay a simple ellipse showing the restoring beam (FWHM) in the lower-right corner."""
-        if not show:
-            return
-        bmaj = header.get("BMAJ")
-        bmin = header.get("BMIN")
-
-        w_pix = bmaj / ipix_deg * 2
-        h_pix = bmin / jpix_deg * 2
-        ny, nx = shape
-        pad = 20
-        
-        cx = nx - pad - 0.5 * w_pix
-        cy = pad + 0.5 * h_pix
-        angle = header.get("BPA", 0.0)
-        pix_transform = ax.get_transform('pixel') if hasattr(ax, 'get_transform') else ax.transData
-        ax.add_patch(
-            Ellipse((cx, cy), width=w_pix, height=h_pix, angle=angle,
-                    facecolor="gray", edgecolor="gray", lw=0, alpha=0.3, zorder=9, transform=pix_transform)
-        )
-        ax.add_patch(
-            Ellipse((cx, cy), width=w_pix, height=h_pix, angle=angle,
-                    facecolor="none", edgecolor="black", lw=1.2, zorder=10, transform=pix_transform)
-        )
-
     # ------------------------------------------------------------------
     # Internal helpers for field/spw selection & plotting
     # ------------------------------------------------------------------
-    @staticmethod
-    def _normalize_sel(value):
-        if value is None:
-            return None
-        if isinstance(value, (list, tuple, set)):
-            return [str(v) for v in value]
-        return [str(value)]
+    # (Multi-field selection logic removed; legacy normalization helper dropped)
 
-    def _collect_field_spw(self, ds_entry, fields_sel, spws_sel):
-        """Return list of (fkey, skey, entry) respecting selections.
+    # ------------------------------------------------------------------
+    # Key resolution helper (single field/spw only now)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _resolve_key(keys: List[str], selection: Optional[Any], prefix: str) -> str:
+        """Resolve a dictionary key from a user selection.
 
         Rules:
-          - If neither field nor spw specified: return first field & its first spw.
-          - If only field(s) specified: for each requested field return ONLY its first spw.
-          - If only spw(s) specified: use first field, selecting requested spws (id match or index); unspecified -> ignore; if none valid -> first spw.
-          - If both specified: for each requested field pair with requested spws; spw tokens interpreted as id OR zero-based index within that field's spw list.
-          - If a requested field id does not exist, it is ignored; if all ignored -> fallback to first field & first spw.
-          - If requested spws do not match any for a field, fallback to that field's first spw.
+          - selection None  -> first key
+          - int             -> index into keys (clamped)
+          - exact match     -> itself
+          - else try prefix+selection (e.g. 'field2'); fallback to first
         """
-        # Build mapping: field_id -> list of (spw_id, fkey, skey, entry)
-        field_map = {}
-        for fkey, spw_dict in ds_entry.items():
-            if not fkey.startswith('field'):
-                continue
-            fid = fkey.replace('field', '')
-            spw_list = []
-            for skey, entry in spw_dict.items():
-                if not skey.startswith('spw'):
-                    continue
-                sid = skey.replace('spw', '')
-                spw_list.append((sid, fkey, skey, entry))
-            if spw_list:
-                # Preserve original ordering
-                field_map[fid] = spw_list
-        if not field_map:
-            return []
-        # Determine fields to use
-        if fields_sel:
-            chosen_fields = [fid for fid in fields_sel if fid in field_map]
-            if not chosen_fields:
-                chosen_fields = [next(iter(field_map))]
-        else:
-            chosen_fields = [next(iter(field_map))]
-        results = []
-        # Helper to interpret spw tokens for a given spw_list
-        def resolve_spw_tokens(spw_tokens, spw_list):
-            if not spw_tokens:
-                return [spw_list[0]]  # default first
-            chosen = []
-            ids = [sid for sid, *_ in spw_list]
-            for tok in spw_tokens:
-                # direct id match
-                if tok in ids:
-                    idx = ids.index(tok)
-                    chosen.append(spw_list[idx])
-                    continue
-                # index interpretation
-                if tok.isdigit():
-                    idx_int = int(tok)
-                    if 0 <= idx_int < len(spw_list):
-                        chosen.append(spw_list[idx_int])
-                        continue
-            if not chosen:
-                chosen = [spw_list[0]]  # fallback
-            return chosen
-        for fid in chosen_fields:
-            spw_list = field_map[fid]
-            # Determine spws to use based on whether user supplied spws_sel and/or fields_sel
-            if fields_sel and not spws_sel:
-                # Only fields specified => default first spw per field
-                chosen_spws = [spw_list[0]]
-            elif spws_sel and not fields_sel:
-                # Only spws specified => apply to first field only (already chosen_fields will just be first field)
-                chosen_spws = resolve_spw_tokens(spws_sel, spw_list)
-            else:
-                # Both specified OR both unspecified -> resolve normally (unspecified case handled by tokens None)
-                chosen_spws = resolve_spw_tokens(spws_sel, spw_list)
-            for sid, fkey, skey, entry in chosen_spws:
-                results.append((fkey, skey, entry))
-        return results
+        if not keys:
+            raise KeyError("No keys available while resolving selection.")
+        if selection is None:
+            return keys[0]
+        if isinstance(selection, int):
+            return keys[selection] if 0 <= selection < len(keys) else keys[0]
+        if selection in keys:
+            return selection
+        guess = f"{prefix}{selection}"
+        return guess if guess in keys else keys[0]
 
-    def _plot_single_y(self, m_name, dset, fkey, skey, entry, convert_to_jy_beam, freq_hz, cmap, save_plots, output_dir, filename, imshow_kwargs):
-        header = entry['header']
-        data_arr = self._extract_plane(entry['model_data'])
-        meta = None
-        if convert_to_jy_beam:
-            data_arr, meta = self._y_to_jy_per_beam(data_arr, header, freq_hz=freq_hz)
-        wcs = self._safe_wcs(header)
-        fig, ax = plt.subplots(1, 1, figsize=(6, 5), subplot_kw={"projection": wcs})
-        im = ax.imshow(data_arr, origin="lower", cmap=cmap, **imshow_kwargs)
-        cbar = fig.colorbar(im, ax=ax, orientation="horizontal", pad=0.05, fraction=0.05)
-        cbar.set_label(meta['unit'] if convert_to_jy_beam else 'Compton y')
-        ax.set_xlabel('RA (J2000)')
-        ax.set_ylabel('Dec (J2000)')
-        ax.set_title(f"{m_name} [{dset}] {fkey}:{skey}")
-        plt.tight_layout()
-        if save_plots:
-            os.makedirs(output_dir, exist_ok=True)
-            if filename is None:
-                suffix = '_jybeam' if convert_to_jy_beam else ''
-                outname = f"y_map_{m_name}_{dset}_{fkey}_{skey}{suffix}.png"
-            else:
-                outname = filename
-            fig.savefig(os.path.join(output_dir, outname), dpi=300, bbox_inches='tight')
-        plt.show()
 
-    def _plot_single_model_image(self, m_name, dset, fkey, skey, entry, cmap, smooth, save_plots, output_dir, filename, imshow_kwargs):
+    # ------------------------------------------------------------------
+    # Unified map plotting (input / filtered / residual / data)
+    # ------------------------------------------------------------------
+    def plot_map(self, model_name: str, data_name: str, types, *, field=None, spw=None,
+                 cmap: str = 'RdBu_r', save_plots: bool = False,
+                 output_dir: str = '../plots/maps/', use_style: bool = True,
+                 filename: Optional[str] = None,
+                 aspect: str = 'equal', **imshow_kwargs):
+        
+        """Plot one or multiple map types in a single row.
+
+        types: str or list of {'input','filtered','residual','data'}
+            input    : Compton-y (primary-beam corrected) model map
+            filtered : Dirty image from model visibilities (Jy/beam -> mJy/beam)
+            residual : Dirty residual image (data - model) (mJy/beam)
+            data     : CLEAN / image_data plane (mJy/beam)
+        (WCS axis support removed – axes are simple pixel coordinates.)
+        """
+
+        def _add_beam(ax, header, shape):
+            bmaj = header.get('BMAJ'); bmin = header.get('BMIN')
+            if not bmaj or not bmin:
+                return
+            ipd, jpd = ipix_deg, jpix_deg
+            w_pix = bmaj / ipd * 2
+            h_pix = bmin / jpd * 2
+            ny, nx = shape
+            pad = 8
+            cx = nx - pad - 0.5*w_pix
+            cy = pad + 0.5*h_pix
+            ax.add_patch(Ellipse((cx, cy), width=w_pix, height=h_pix, angle=header.get('BPA',0.0),
+                                 facecolor='none', edgecolor='k', lw=1.0, alpha=0.8))
+        
+        if use_style:
+            setup_plot_style()
+
+        map_types = types if isinstance(types, (list, tuple)) else [types]
+        allowed_types = {'input','filtered','residual','data'}
+        invalid = [t for t in map_types if t not in allowed_types]
+        if invalid:
+            raise ValueError(f"Unsupported map type(s): {invalid}. Allowed types: {sorted(allowed_types)}")
+        
+        # Locate dataset entry and pick single field/spw via helper
+        ds_entry = self.model_maps[model_name][data_name]
+        fkey = self._resolve_key(list(ds_entry.keys()), field, prefix='field')
+        spw_dict = ds_entry[fkey]
+        skey = self._resolve_key(list(spw_dict.keys()), spw, prefix='spw')
+        entry = spw_dict[skey]
+        
+        # Proceed with single field/spw plotting (restructured & robust)
         header = entry['header']
-        model_plane_y = self._extract_plane(entry['model_data'])
-        image_plane_jy = self._extract_plane(entry['image_data']) if 'image_data' in entry else None
-        if image_plane_jy is None:
-            warnings.warn(f"No image_data for '{m_name}' [{dset}] {fkey}:{skey} — skipping.")
-            return
-        freq_hz = self._freq_from_header(header)
         ipix_deg, jpix_deg = self._pixel_scale_deg(header)
-        bmaj = header.get('BMAJ')
-        bmin = header.get('BMIN')
-        if not bmaj or not bmin:
-            raise ValueError('Beam (BMAJ/BMIN) missing from header.')
-        model_jy_pix = model_plane_y * ytszToJyPix(freq_hz, ipix_deg, jpix_deg)
-        beam_conv = JyBeamToJyPix(ipix_deg, jpix_deg, bmaj, bmin)
-        if smooth:
-            fwhm_maj_pix = bmaj / ipix_deg
-            fwhm_min_pix = bmin / jpix_deg
-            sigma_maj_pix = fwhm_maj_pix / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-            sigma_min_pix = fwhm_min_pix / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-            theta = np.deg2rad(header.get('BPA', 0.0))
-            kernel = Gaussian2DKernel(x_stddev=sigma_maj_pix, y_stddev=sigma_min_pix, theta=theta)
-            model_jy_pix = convolve(model_jy_pix, kernel, normalize_kernel=True)
-        model_jy_beam = model_jy_pix / beam_conv
-        model_mjy = model_jy_beam * 1e3
-        image_mjy = image_plane_jy * 1e3
-        vabs = np.nanmax(np.abs(image_mjy))
-        vmin, vmax = -vabs, vabs
-        wcs = self._safe_wcs(header)
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5), subplot_kw={'projection': wcs}, gridspec_kw={'wspace': 0})
-        im0 = axes[0].imshow(model_mjy, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax, **imshow_kwargs)
-        im1 = axes[1].imshow(image_mjy, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax, **imshow_kwargs)
-        self._add_beam(axes[1], header, image_mjy.shape, ipix_deg, jpix_deg, show=True)
-        self._add_beam(axes[0], header, model_mjy.shape, ipix_deg, jpix_deg, show=smooth)
-        cbar0 = fig.colorbar(im0, ax=axes[0], orientation='horizontal', pad=0.05, fraction=0.046)
-        cbar1 = fig.colorbar(im1, ax=axes[1], orientation='horizontal', pad=0.05, fraction=0.046)
-        cbar0.set_label('mJy/beam' + (' (smoothed)' if smooth else ''))
-        cbar1.set_label('mJy/beam')
-        for ax in axes:
-            ax.set_xlabel('Right Ascension (deg)')
-            ax.coords[0].set_axislabel('RA (J2000)')
-            ax.coords[1].set_axislabel('Dec (J2000)')
-            ax.set_aspect('equal')
-        axes[0].set_title(f"{m_name} [{dset}] {fkey}:{skey} model")
-        axes[1].set_title(f"{m_name} [{dset}] {fkey}:{skey} image")
-        axes[1].set_yticklabels([])
+        pb_map_full = entry.get('pb_map')
+
+        plane_pb = self._extract_plane(entry['model_data'])  # y * PB
+        pb_plane = self._extract_plane(pb_map_full)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            y_map = np.where(pb_plane > 0, plane_pb / pb_plane, 0.0) if pb_plane is not None else plane_pb
+        
+        image_plane_jy = self._extract_plane(entry.get('image_data')) if entry.get('image_data') is not None else None
+        want_filtered = any(t in ('filtered','residual') for t in map_types)
+        dirty_model = dirty_resid = None
+        if want_filtered:
+            sm_entry = self.matched_models[model_name][data_name]['sampled_model'][fkey][skey]
+            u = sm_entry['u']; v = sm_entry['v']; w = sm_entry['weights']
+            model_vis = sm_entry['model_vis']; resid_vis = sm_entry['resid_vis']
+            npix = plane_pb.shape[0]
+            pix_deg = abs(header.get('CDELT1') or header.get('CD1_1'))
+            dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
+            dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
+        
+        bmaj = header.get('BMAJ'); bmin = header.get('BMIN')
+        _ = JyBeamToJyPix(ipix_deg, jpix_deg, bmaj, bmin) if (bmaj and bmin) else 1.0  # placeholder if needed later
+        
+        panels = [] 
+        for t in map_types:
+            if t == 'input':
+                panels.append(('input', self._extract_plane(y_map)/1e-4, 'y (1e-4)'))
+            elif t == 'filtered' and dirty_model is not None:
+                panels.append(('filtered', self._extract_plane(dirty_model)*1e3, 'mJy/beam'))
+            elif t == 'residual' and dirty_resid is not None:
+                panels.append(('residual', self._extract_plane(dirty_resid)*1e3, 'mJy/beam'))
+            elif t == 'data' and image_plane_jy is not None:
+                panels.append(('data', self._extract_plane(image_plane_jy)*1e3, 'mJy/beam'))
+        
+        amp_arrays = [arr for name, arr, unit in panels if unit.startswith('mJy')]
+        if amp_arrays:
+            vmin = min(np.nanmin(a) for a in amp_arrays)
+            vmax = -vmin
+        
+        n = len(panels)
+        fig = plt.figure(figsize=(4*n, 4))
+        axes = []
+        
+        for i_panel in range(n):
+            ax = fig.add_subplot(1, n, i_panel+1)
+            axes.append(ax)
+        
+        for idx_col, (ax, (name, arr, unit)) in enumerate(zip(axes, panels)):
+            im_kwargs = dict(origin='lower', cmap=cmap)
+            if unit.startswith('mJy') and vmin is not None:
+                im_kwargs.update(vmin=vmin, vmax=vmax)
+            im = ax.imshow(arr, **im_kwargs, **imshow_kwargs)
+            ax.set_title(f"{name} {fkey}:{skey}")
+            # Aspect management (try/except in case backend/version mismatch)
+            try:
+                ax.set_aspect(aspect)
+            except Exception:
+                pass
+            # Axis tick handling: remove ALL y ticks & ticklabels (user preference)
+            ax.set_yticks([])
+            ax.set_ylabel('')
+            ax.tick_params(left=False)
+            # Remove all x-axis ticks/labels (user preference) & top/right ticks
+            ax.set_xticks([])
+            ax.set_xlabel('')
+            ax.tick_params(bottom=False, top=False, right=False)
+            if unit.endswith('Jy/beam') or unit.endswith('mJy/beam'):
+                _add_beam(ax, header, arr.shape)
+            # Colorbar handling (single approach)
+            div = make_axes_locatable(ax)
+            cax = div.append_axes('bottom', size='5%', pad=0.1)
+            cb = plt.colorbar(im, cax=cax, orientation='horizontal')
+            cb.set_label(unit)
+            
+            # Hard-disable y-axis ticks/labels for horizontal colorbars
+            # try:
+            cb.ax.set_ylabel('')
+            cb.ax.get_yaxis().set_visible(False)
+            cb.ax.set_yticks([])
+            cb.ax.yaxis.set_ticklabels([])
+            cb.ax.tick_params(axis='y', length=0)
+
+            mid = len(axes)//2
+            ax.set_ylabel('')
+            ax.set_xlabel('')
+                        
         plt.tight_layout()
         if save_plots:
             os.makedirs(output_dir, exist_ok=True)
-            if filename is None:
-                suffix = '_smoothed' if smooth else ''
-                outname = f"model_image_{m_name}_{dset}_{fkey}_{skey}_mJybeam{suffix}.png"
-            else:
-                outname = filename
-            fig.savefig(os.path.join(output_dir, outname), dpi=300, bbox_inches='tight')
+            out = filename or f"maps_{model_name}_{data_name}_{fkey}_{skey}_{'_'.join(map_types)}.png"
+            fig.savefig(os.path.join(output_dir, out), dpi=300, bbox_inches='tight')
         plt.show()
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-    def plot_y_map(self, model_name: Optional[str] = None, data_name: Optional[str] = None,
-                   convert_to_jy_beam: bool = False, freq_hz: Optional[float] = None,
-                   cmap: str = "viridis", save_plots: bool = False,
-                   output_dir: str = "../plots/maps/", use_style: bool = True,
-                   filename: Optional[str] = None, field: Optional[Any] = None,
-                   spw: Optional[Any] = None, **imshow_kwargs) -> None:
-        """Plot Compton-y (optionally Jy/beam) maps.
-
-        Field / SPW selection semantics:
-          field=None, spw=None: first field & first spw
-          field='1', spw=None: field 1 & its first spw
-          field=None, spw='0': first field & first spw (index/id 0)
-          field='1', spw='0': field 1 & its spw index/id 0
-          Multiple values (lists) allowed; defaults per field to its first spw when spw not supplied.
-        """
-        if use_style:
-            setup_plot_style()
-        fields_sel = self._normalize_sel(field)
-        spws_sel = self._normalize_sel(spw)
-        # Build list of (model_name, data_name) pairs to plot
-        pairs = []
-        matched = getattr(self, 'matched_models', {})
-        if model_name and data_name:
-            pairs = [(model_name, data_name)]
-        elif model_name:
-            datas = list(matched.get(model_name, {}).keys())
-            if not datas:
-                raise ValueError(f"Model '{model_name}' has not been matched. Call match_model().")
-            pairs = [(model_name, d) for d in datas]
-        elif data_name:
-            models = [m for m, ds in matched.items() if data_name in ds]
-            if not models:
-                raise ValueError(f"No models matched to data set '{data_name}'.")
-            pairs = [(m, data_name) for m in models]
-        else:
-            for m, ds in matched.items():
-                for d in ds.keys():
-                    pairs.append((m, d))
-            if not pairs:
-                raise ValueError("No matched model/data pairs. Use match_model().")
-        # Iterate over pairs
-        for m_name, dset in pairs:
-            if m_name not in self.model_maps or dset not in self.model_maps[m_name]:
-                # Fallback selection
-                entry, _, _ = self._resolve_map_selection(m_name)
-                header = entry['header']
-                model_plane = self._extract_plane(entry['model_data'])
-                data_arr = model_plane
-                meta = None
-                if convert_to_jy_beam:
-                    data_arr, meta = self._y_to_jy_per_beam(data_arr, header, freq_hz=freq_hz)
-                wcs = self._safe_wcs(header)
-                fig, ax = plt.subplots(1, 1, figsize=(6, 5), subplot_kw={"projection": wcs})
-                im = ax.imshow(data_arr, origin="lower", cmap=cmap, **imshow_kwargs)
-                cbar = fig.colorbar(im, ax=ax, orientation="horizontal", pad=0.05, fraction=0.05)
-                cbar.set_label(meta['unit'] if convert_to_jy_beam else 'Compton y')
-                ax.set_xlabel('RA (J2000)')
-                ax.set_ylabel('Dec (J2000)')
-                ax.set_title(f"{m_name} [{dset}] (fallback)")
-                plt.tight_layout()
-                if save_plots:
-                    os.makedirs(output_dir, exist_ok=True)
-                    suffix = '_jybeam' if convert_to_jy_beam else ''
-                    outname = filename or f"y_map_{m_name}_{dset}{suffix}.png"
-                    fig.savefig(os.path.join(output_dir, outname), dpi=300, bbox_inches='tight')
-                plt.show()
-                continue
-            ds_entry = self.model_maps[m_name][dset]
-            selections = self._collect_field_spw(ds_entry, fields_sel, spws_sel)
-            for fkey, skey, entry in selections:
-                self._plot_single_y(m_name, dset, fkey, skey, entry, convert_to_jy_beam,
-                                    freq_hz, cmap, save_plots, output_dir, filename, imshow_kwargs)
-
-    def plot_model_image_comparison(self, model_name: Optional[str] = None, data_name: Optional[str] = None,
-                                    cmap: str = 'RdBu_r', smooth: bool = True,
-                                    save_plots: bool = False, output_dir: str = '../plots/maps/',
-                                    use_style: bool = True, filename: Optional[str] = None,
-                                    field: Optional[Any] = None, spw: Optional[Any] = None,
-                                    **imshow_kwargs) -> None:
-        """Plot model vs image panels.
-
-        Selection semantics identical to plot_y_map (see its docstring)."""
-        if use_style:
-            setup_plot_style()
-        fields_sel = self._normalize_sel(field)
-        spws_sel = self._normalize_sel(spw)
-        # Determine pairs
-        pairs = []
-        matched = getattr(self, 'matched_models', {})
-        if model_name and data_name:
-            pairs = [(model_name, data_name)]
-        elif model_name:
-            datas = list(matched.get(model_name, {}).keys())
-            if not datas:
-                raise ValueError(f"Model '{model_name}' has not been matched. Call match_model().")
-            pairs = [(model_name, d) for d in datas]
-        elif data_name:
-            models = [m for m, ds in matched.items() if data_name in ds]
-            if not models:
-                raise ValueError(f"No models matched to data set '{data_name}'.")
-            pairs = [(m, data_name) for m in models]
-        else:
-            for m, ds in matched.items():
-                for d in ds.keys():
-                    pairs.append((m, d))
-            if not pairs:
-                raise ValueError("No matched model/data pairs. Use match_model() first or specify model_name/data_name.")
-        for m_name, dset in pairs:
-            if m_name not in self.model_maps or dset not in self.model_maps[m_name]:
-                entry, _, _ = self._resolve_map_selection(m_name)
-                header = entry['header']
-                # attempt fallback plot (single)
-                ds_entry = { 'field0': { 'spw0': entry } }
-            else:
-                ds_entry = self.model_maps[m_name][dset]
-            selections = self._collect_field_spw(ds_entry, fields_sel, spws_sel)
-            for fkey, skey, entry in selections:
-                self._plot_single_model_image(m_name, dset, fkey, skey, entry, cmap, smooth,
-                                              save_plots, output_dir, filename, imshow_kwargs)
