@@ -223,12 +223,10 @@ class FourierManager:
         model_plane = np.nan_to_num(model_plane, nan=0.0, posinf=0.0, neginf=0.0)
 
         # Frequency & pixel scale --------------------------------------------------
-        freq = None
-        for k in ("RESTFRQ", "CRVAL3"):
-            if k in header and header[k]:
-                freq = header[k]; break
+        # Frequency: rely solely on CRVAL3 (ignore potentially incorrect RESTFRQ)
+        freq = header.get('CRVAL3')
         if freq is None:
-            raise ValueError("Frequency not found in header (RESTFRQ/CRVAL3)")
+            raise ValueError("Frequency not found in header (CRVAL3)")
         cd1 = header.get('CDELT1') or header.get('CD1_1')
         cd2 = header.get('CDELT2') or header.get('CD2_2')
         if cd1 is None or cd2 is None:
