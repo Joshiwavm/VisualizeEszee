@@ -1,13 +1,104 @@
 from __future__ import annotations
-import numpy as np
-from scipy.interpolate import RectBivariateSpline
+"""Fourier / visibility utilities and spectral scaling manager.
+
+This module provides the `FourierManager` class, responsible for:
+    * Converting model image planes (Compton-y or brightness) to Jy/beam.
+    * Applying spectral scaling (power-law variants, dust, simple scaling).
+    * Performing FFT to the uv half-plane and interpolating sample points.
+    * Computing residual visibilities and simple imaging (NUFFT via jax_finufft).
+
+Assumptions:
+    * Input model maps are square and already aligned on the target pixel grid.
+    * tSZ model maps are in Compton-y; non-tSZ maps are in surface brightness units.
+    * Model registry `self.models` stores standardized parameter blocks with
+        `parameters['spectrum']['type']` populated.
+"""
+
 from typing import Tuple, Sequence, Dict, Any, Optional
 
+import numpy as np
+from scipy.interpolate import RectBivariateSpline
+
+# Heavy / optional imports moved to top per request; if unavailable they will raise at import time.
+import jax  # noqa: F401
+import jax_finufft  # noqa: F401
+
+from ..utils.utils import (
+        ytszToJyPix,
+        JyBeamToJyPix,
+        comptonCorrect,
+        computeFlatCompton,
+)
+
 class FourierManager:
-    """Fourier-domain operations using matched_models structure."""
+    """Manage Fourier-domain operations and spectral scaling.
+
+    Attributes
+    ----------
+    models : dict
+        Registry of model definitions & parameters (expected external assignment).
+    matched_models : dict
+        Nested structure linking models to datasets and their map entries.
+    uvdata : dict
+        Observational uv datasets keyed by data / field / spw.
+    """
+
+    # ------------------------------------------------------------------
+    # Spectral scaling helpers (non-tSZ)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _scale_powerlaw(spec: Dict[str, Any], freq: float) -> float:
+        """Simple power-law scaling: S = amp * (nu/nu0)^SpecIndex."""
+        ref = float(spec.get('nu0', freq) or freq)
+        idx = float(spec.get('SpecIndex', spec.get('specindex', 0.0)))
+        amp = float(spec.get('amp', 1.0))
+        x = freq / ref if ref else 1.0
+        return amp * (x ** idx)
+
+    @staticmethod
+    def _scale_powerlawmod(spec: Dict[str, Any], freq: float) -> float:
+        """Modified power-law: curvature changes effective index with log(nu/nu0)."""
+        ref = float(spec.get('nu0', freq) or freq)
+        idx = float(spec.get('SpecIndex', spec.get('specindex', 0.0)))
+        curv = float(spec.get('SpecCurv', spec.get('speccurv', 0.0)))
+        amp = float(spec.get('amp', 1.0))
+        x = freq / ref if ref else 1.0
+        idx_eff = idx + curv * np.log(max(x, 1e-30))
+        return amp * (x ** idx_eff)
+
+    @staticmethod
+    def _scale_powerdust(spec: Dict[str, Any], freq: float) -> float:
+        """Simplified dust-like scaling: combines indices & curvature in exponent."""
+        ref = float(spec.get('nu0', freq) or freq)
+        idx = float(spec.get('SpecIndex', spec.get('specindex', 0.0)))
+        beta = float(spec.get('beta', 0.0))
+        curv = float(spec.get('SpecCurv', spec.get('speccurv', 0.0)))
+        amp = float(spec.get('amp', 1.0))
+        x = freq / ref if ref else 1.0
+        base = idx + beta + curv * np.log(max(x, 1e-30))
+        return amp * (x ** base)
+
+    @staticmethod
+    def _scale_scaling(spec: Dict[str, Any], freq: float) -> float:
+        """Trivial scaling: constant amplitude across frequency."""
+        return float(spec.get('amp', 1.0))
+
+    def _spectral_scale(self, spec: Dict[str, Any], freq: float) -> float:
+        """Dispatch spectral model type to scaling function."""
+        stype = str(spec.get('type', '')).lower()
+        if stype == 'powerlaw':
+            return self._scale_powerlaw(spec, freq)
+        if stype == 'powerlawmod':
+            return self._scale_powerlawmod(spec, freq)
+        if stype == 'powerdust':
+            return self._scale_powerdust(spec, freq)
+        if stype == 'scaling':
+            return self._scale_scaling(spec, freq)
+        return float(spec.get('amp', 1.0))
 
     @staticmethod
     def map_to_uvgrid(image: np.ndarray, pixel_scale_deg: float) -> Tuple[np.ndarray, float]:
+        """FFT an image to half-plane uv grid (rfft) and return grid & du spacing."""
         if image.ndim != 2 or image.shape[0] != image.shape[1]:
             raise ValueError("image must be square 2D array")
         N = image.shape[0]
@@ -19,6 +110,7 @@ class FourierManager:
     @staticmethod
     def sample_uv(uv_rfft_shifted: np.ndarray, u: Sequence[float], v: Sequence[float], du: float,
                   dRA: float = 0.0, dDec: float = 0.0, PA: float = 0.0, origin: str = 'upper') -> np.ndarray:
+        """Interpolate uv grid at (u,v) with rotation & phase offsets."""
         u = np.asarray(u); v = np.asarray(v)
         if u.shape != v.shape:
             raise ValueError("u and v must have same shape")
@@ -57,10 +149,9 @@ class FourierManager:
                      pixel_scale_deg: float | None = None,
                      normalize: bool = True,
                      use_jax: bool = True) -> np.ndarray:
+        """Dirty image reconstruction via NUFFT (requires jax + jax_finufft)."""
         if not use_jax:
             raise ValueError("vis_to_image requires JAX backend.")
-        import jax  # noqa: F401
-        import jax_finufft
         u = np.asarray(u); v = np.asarray(v); vis = np.asarray(vis)
         if u.shape != v.shape or u.shape != vis.shape:
             raise ValueError("u, v, vis must share shape")
@@ -89,6 +180,7 @@ class FourierManager:
     @staticmethod
     def multi_field_dirty(fields: Sequence[Dict[str, Any]], npix: int, pixel_scale_deg: float,
                           align: bool = True, normalize: bool = True) -> np.ndarray:
+        """Combine multiple fields (optionally phase-align) into a single dirty image."""
         accum_u, accum_v, accum_vis, accum_w = [], [], [], []
         for fd in fields:
             u = np.asarray(fd['u']); v = np.asarray(fd['v']); vis = np.asarray(fd['vis'])
@@ -108,6 +200,7 @@ class FourierManager:
 
     @staticmethod
     def residual_vis(data_vis: Sequence[complex], model_vis: Sequence[complex]) -> np.ndarray:
+        """Compute residual visibilities (data - model)."""
         data_vis = np.asarray(data_vis); model_vis = np.asarray(model_vis)
         if data_vis.shape != model_vis.shape:
             raise ValueError("data_vis and model_vis shape mismatch")
@@ -115,11 +208,13 @@ class FourierManager:
 
     @staticmethod
     def scale_vis(vis: Sequence[complex], factor: float) -> np.ndarray:
+        """Scalar multiply visibility array."""
         return np.asarray(vis) * factor
 
     @staticmethod
     def phase_shift(vis: Sequence[complex], u: Sequence[float], v: Sequence[float],
                     dRA: float = 0.0, dDec: float = 0.0) -> np.ndarray:
+        """Apply phase shift corresponding to RA/Dec offsets (degrees)."""
         vis = np.asarray(vis); u = np.asarray(u); v = np.asarray(v)
         if vis.shape != u.shape:
             raise ValueError("vis and u/v shapes mismatch")
@@ -128,6 +223,7 @@ class FourierManager:
 
     @staticmethod
     def _extract_plane(arr):
+        """Return 2D plane from 2D/3D/4D (stokes/freq) array layouts."""
         a = np.asarray(arr)
         if a.ndim == 4:
             return a[0, 0]
@@ -135,11 +231,18 @@ class FourierManager:
             return a[0]
         return a
 
-    def _convert_model_map_to_jybeam(self, entry):
-        from ..utils.utils import ytszToJyPix, JyBeamToJyPix
+    def _convert_model_map_to_jybeam(self, model_name, entry):
+        """Convert a model map to Jy/beam applying spectral rules.
+
+        For tSZ spectra: apply relativistic correction & Compton-y to Jy/beam.
+        For non-tSZ spectra: apply analytic spectral scaling in image domain.
+        Returns (image_JyPerBeam, pixel_scale_deg).
+        """
         header = entry['header']
         model_plane = self._extract_plane(entry['model_data'])
         model_plane = np.nan_to_num(model_plane, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Frequency & pixel scale --------------------------------------------------
         freq = None
         for k in ("RESTFRQ", "CRVAL3"):
             if k in header and header[k]:
@@ -151,6 +254,37 @@ class FourierManager:
         if cd1 is None or cd2 is None:
             raise ValueError("Pixel scale missing (CDELT1/2 or CD*_*).")
         ipix_deg, jpix_deg = abs(cd1), abs(cd2)
+
+        # Spectrum type (standardized structure) ----------------------------------
+        spec_type = self.models[model_name]['parameters']['spectrum']['type']
+        is_tsz = isinstance(spec_type, str) and spec_type.lower() == 'tsz'
+
+        if not is_tsz:
+            spec = self.models[model_name]['parameters']['spectrum']
+            scale = self._spectral_scale(spec, freq)
+            return model_plane * scale, ipix_deg
+
+        # tSZ conversion path ------------------------------------------------------
+        # Temperature extraction (optional) ---------------------------------------
+        Te = 0.0
+        model_block = self.models[model_name]['parameters'].get('model', {})
+        Te = 0.0
+        for key in ('Te','Temperature','temperature','kTe','Tout'):
+            if key in model_block and model_block[key] is not None:
+                Te = float(model_block[key])
+                break
+
+        # Relativistic correction coefficients
+        osz = 4
+        imfreq = [freq, freq]
+        imdelt = [ipix_deg, jpix_deg]
+        coeffs = np.array([computeFlatCompton(imfreq, imdelt, order) for order in range(1+osz)])
+        corr = comptonCorrect(coeffs, Te=Te)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            inv_corr = 1.0 / corr if np.all(corr) else 1.0
+        model_plane = model_plane * inv_corr
+
+        # y -> Jy/pixel then to Jy/beam
         jy_pix = model_plane * ytszToJyPix(freq, ipix_deg, jpix_deg)
         bmaj = header.get('BMAJ'); bmin = header.get('BMIN')
         if not bmaj or not bmin:
@@ -162,21 +296,31 @@ class FourierManager:
     # New sampling API against matched_models structure
     # ------------------------------------------------------------------
     def fft_map(self, model_name, data_name, field_key, spw_key):
+        """Produce uv grid (half-plane) for a model/data/spw combination."""
         maps = self.matched_models[model_name][data_name]['maps']
         entry = maps[field_key][spw_key]
-        jy_beam_image, pix_deg = self._convert_model_map_to_jybeam(entry)
+        jy_beam_image, pix_deg = self._convert_model_map_to_jybeam(model_name, entry)
         uv_grid, du = self.map_to_uvgrid(jy_beam_image, pix_deg)
         return {'uv': uv_grid, 'du': du, 'pixscale_deg': pix_deg}
 
     def sample_fft(self, model_name, data_name, field_key, spw_key):
+        """Sample model uv grid at observed (u,v) coordinates; store results."""
+
+        # get uvdata
         uvrec = self.uvdata[data_name][field_key][spw_key]
         u, v = uvrec.uwave, uvrec.vwave
         real, imag, wgt = uvrec.uvreal, uvrec.uvimag, uvrec.suvwght
         freq = uvrec.uvfreq  # added frequency array
+
+        # fft map 
         uv_entry = self.fft_map(model_name, data_name, field_key, spw_key)
         model_vis = self.sample_uv(uv_entry['uv'], u, v, uv_entry['du'])
+
+        # compute residuals
         data_vis = real + 1j * imag
         resid_vis = data_vis - model_vis
+
+        # store sampled model
         sm_store = self.matched_models[model_name][data_name].setdefault('sampled_model', {})
         sm_store.setdefault(field_key, {})[spw_key] = {
             'model_vis': model_vis,
@@ -190,6 +334,7 @@ class FourierManager:
         return model_vis
 
     def map_to_vis(self, model_name, data_name, field_key, spw_key):
+        """Convenience wrapper returning (model_vis, resid_vis)."""
         self.sample_fft(model_name, data_name, field_key, spw_key)
         entry = self.matched_models[model_name][data_name]['sampled_model'][field_key][spw_key]
         return entry['model_vis'], entry['resid_vis']

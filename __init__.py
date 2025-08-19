@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from .utils import *
-from .loading import PlotManager
+from .loading import Manager
 
-__all__ = ['PlotManager']
+__all__ = ['Manager']
 
 

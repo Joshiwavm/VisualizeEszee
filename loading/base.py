@@ -4,7 +4,7 @@ from ..plot import PlotGatherer
 from ..fourier import FourierManager
 import warnings
 
-class PlotManager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
+class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
     """
     Main manager class for loading, processing, and plotting ALMA uv-data and models.
     Unified containers:
@@ -61,22 +61,19 @@ class PlotManager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
         if meta.get('obstype','').lower() != 'interferometer':
             return None
         model_info = self.models[model_name]
-        if data_name not in model_info:
-            # attach spatial metadata snapshot for record
-            model_info[data_name] = {
-                'band': meta.get('band'),
-                'array': meta.get('array'),
-                'fields': meta.get('fields'),
-                'spws': meta.get('spws'),
-                'binvis': meta.get('binvis')
-            }
-            # build maps for this pair
-            maps = self.add_model_maps(model_name, dataset_name=data_name)
-        else:
-            # ensure maps exist (rebuild each match for simplicity)
-            maps = self.add_model_maps(model_name, dataset_name=data_name)
+
+        model_info[data_name] = {
+            'band': meta.get('band'),
+            'array': meta.get('array'),
+            'fields': meta.get('fields'),
+            'spws': meta.get('spws'),
+            'binvis': meta.get('binvis')
+        }
+        # build maps for this pair
+        maps = self.add_model_maps(model_name, dataset_name=data_name)
         assoc = self.matched_models.setdefault(model_name, {}).setdefault(data_name, {})
         assoc.update({'status': 'fourier_pending', 'notes': notes, 'maps': maps, 'sampled_model': {}})
+        
         # Build Fourier products
         fields = meta.get('fields', [])
         spws_nested = meta.get('spws', [])

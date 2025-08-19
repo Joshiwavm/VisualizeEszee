@@ -207,9 +207,10 @@ def _build_gnfw_parameters(params: Dict[str, Any]) -> Dict[str, Any]:
 
 def _build_spectrum_parameters(dist_cfg: Dict[str, Any]) -> Dict[str, Any]:
     spec_type = dist_cfg.get('spectrum_type')
-    if spec_type == 'tSZ':
-        return {'type': 'tSZ'}
-    raise ValueError(f"Unknown spectrum type: {spec_type}")
+    if spec_type is None:
+        raise ValueError("Distribution missing 'spectrum_type'")
+    # Always return a standardized dict with at least the type.
+    return {'type': spec_type}
 
 # ------------------------------------------------------------------
 # Listing helpers
