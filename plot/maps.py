@@ -59,7 +59,7 @@ class PlotMaps:
         if freq_hz is None:
             freq_hz = cls._freq_from_header(header)
         ipix_deg, jpix_deg = cls._pixel_scale_deg(header)
-        jy_pix = y_map * ytszToJyPix(freq_hz, ipix_deg, jpix_deg)
+        jy_pix = -1* y_map * ytszToJyPix(freq_hz, ipix_deg, jpix_deg)
         bmaj = header.get("BMAJ")
         bmin = header.get("BMIN")
         if not bmaj or not bmin:
@@ -209,8 +209,7 @@ class PlotMaps:
 
     def _plot_single_y(self, m_name, dset, fkey, skey, entry, convert_to_jy_beam, freq_hz, cmap, save_plots, output_dir, filename, imshow_kwargs):
         header = entry['header']
-        model_plane = self._extract_plane(entry['model_data'])
-        data_arr = model_plane
+        data_arr = self._extract_plane(entry['model_data'])
         meta = None
         if convert_to_jy_beam:
             data_arr, meta = self._y_to_jy_per_beam(data_arr, header, freq_hz=freq_hz)

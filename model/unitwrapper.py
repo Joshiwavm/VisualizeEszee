@@ -55,7 +55,6 @@ class TransformInput:
         z = self._first('redshift', 'z')
         log10_m = self._first('log10_m500', 'log10')
         mass = self._first('mass')
-        # Prefer explicit mass; only derive from log if mass missing
         if mass is None and log10_m is not None:
             mass = 10 ** float(log10_m)
         c500 = self._first('concentration', 'c500')
@@ -86,7 +85,9 @@ class TransformInput:
         amp = amp.to(u.keV / u.cm ** 3)
         amp = amp.value * 1e10
 
-        return {**base, 'amp': amp, 'major': r_s_mpc, 'alpha': alpha, 'beta': beta, 'gamma': gamma, 'ap': ap, 'c500': c500, 'mass': m_eff / 3e14, 'phys_norm': True}
+        mass_input = m_eff / 3e14 *(cosmo.H0.value/70.00)
+
+        return {**base, 'amp': amp, 'major': r_s_mpc, 'alpha': alpha, 'beta': beta, 'gamma': gamma, 'ap': ap, 'c500': c500, 'mass': mass_input, 'phys_norm': True}
 
     def _gnfw_pressure(self, base: Dict[str, Any]) -> Dict[str, Any]:
         z = self._first('redshift', 'z')

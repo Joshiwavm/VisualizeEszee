@@ -10,49 +10,6 @@ cluster_defaults:
   temperature: 0.0
 
 distributions:
-  # A10 variants (Arnaud+2010)
-  a10_up:
-    function: a10Profile
-    model_type: A10Pressure
-    spectrum_type: tSZ
-    parameters:
-      c500: 1.177
-      alpha: 1.051
-      beta: 5.4905
-      gamma: 0.3081
-      p_norm: 8.403
-      alpha_p: 0.12
-      log10: null
-      depth: null
-
-  a10_cc:
-    function: a10Profile
-    model_type: A10Pressure
-    spectrum_type: tSZ
-    parameters:
-      c500: 1.128
-      alpha: 1.2223
-      beta: 5.4905
-      gamma: 0.7736
-      p_norm: 3.249
-      alpha_p: -0.1
-      log10: null
-      depth: null
-
-  a10_md:
-    function: a10Profile
-    model_type: A10Pressure
-    spectrum_type: tSZ
-    parameters:
-      c500: 1.083
-      alpha: 1.4063
-      beta: 5.4905
-      gamma: 0.3798
-      p_norm: 3.202
-      alpha_p: -0.1
-      log10: null
-      depth: null
-
   # McDonald+2014 (A10 form)
   m14_up:
     function: a10Profile
@@ -92,6 +49,49 @@ distributions:
       beta: 5.74
       gamma: 0.05
       p_norm: 3.91
+      alpha_p: -0.1
+      log10: null
+      depth: null
+
+  # A10 variants (Arnaud+2010)
+  a10_up:
+    function: a10Profile
+    model_type: A10Pressure
+    spectrum_type: tSZ
+    parameters:
+      c500: 1.177
+      alpha: 1.051
+      beta: 5.4905
+      gamma: 0.3081
+      p_norm: 8.403
+      alpha_p: 0.12
+      log10: null
+      depth: null
+
+  a10_cc:
+    function: a10Profile
+    model_type: A10Pressure
+    spectrum_type: tSZ
+    parameters:
+      c500: 1.128
+      alpha: 1.2223
+      beta: 5.4905
+      gamma: 0.7736
+      p_norm: 3.249
+      alpha_p: -0.1
+      log10: null
+      depth: null
+
+  a10_md:
+    function: a10Profile
+    model_type: A10Pressure
+    spectrum_type: tSZ
+    parameters:
+      c500: 1.083
+      alpha: 1.4063
+      beta: 5.4905
+      gamma: 0.3798
+      p_norm: 3.202
       alpha_p: -0.1
       log10: null
       depth: null

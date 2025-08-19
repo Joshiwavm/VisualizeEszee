@@ -1,33 +1,18 @@
 from __future__ import annotations
-"""Fourier / visibility utilities and spectral scaling manager.
-
-This module provides the `FourierManager` class, responsible for:
-    * Converting model image planes (Compton-y or brightness) to Jy/beam.
-    * Applying spectral scaling (power-law variants, dust, simple scaling).
-    * Performing FFT to the uv half-plane and interpolating sample points.
-    * Computing residual visibilities and simple imaging (NUFFT via jax_finufft).
-
-Assumptions:
-    * Input model maps are square and already aligned on the target pixel grid.
-    * tSZ model maps are in Compton-y; non-tSZ maps are in surface brightness units.
-    * Model registry `self.models` stores standardized parameter blocks with
-        `parameters['spectrum']['type']` populated.
-"""
-
 from typing import Tuple, Sequence, Dict, Any, Optional
 
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
 
-# Heavy / optional imports moved to top per request; if unavailable they will raise at import time.
 import jax  # noqa: F401
 import jax_finufft  # noqa: F401
 
 from ..utils.utils import (
-        ytszToJyPix,
-        JyBeamToJyPix,
-        comptonCorrect,
-        computeFlatCompton,
+    ytszToJyPix,
+    JyBeamToJyPix,  # retained for potential external use, not applied in Jy/pix path
+    comptonCorrect,
+    computeFlatCompton,
+    comptonRelativ,
 )
 
 class FourierManager:
@@ -48,7 +33,6 @@ class FourierManager:
     # ------------------------------------------------------------------
     @staticmethod
     def _scale_powerlaw(spec: Dict[str, Any], freq: float) -> float:
-        """Simple power-law scaling: S = amp * (nu/nu0)^SpecIndex."""
         ref = float(spec.get('nu0', freq) or freq)
         idx = float(spec.get('SpecIndex', spec.get('specindex', 0.0)))
         amp = float(spec.get('amp', 1.0))
@@ -57,7 +41,6 @@ class FourierManager:
 
     @staticmethod
     def _scale_powerlawmod(spec: Dict[str, Any], freq: float) -> float:
-        """Modified power-law: curvature changes effective index with log(nu/nu0)."""
         ref = float(spec.get('nu0', freq) or freq)
         idx = float(spec.get('SpecIndex', spec.get('specindex', 0.0)))
         curv = float(spec.get('SpecCurv', spec.get('speccurv', 0.0)))
@@ -68,7 +51,6 @@ class FourierManager:
 
     @staticmethod
     def _scale_powerdust(spec: Dict[str, Any], freq: float) -> float:
-        """Simplified dust-like scaling: combines indices & curvature in exponent."""
         ref = float(spec.get('nu0', freq) or freq)
         idx = float(spec.get('SpecIndex', spec.get('specindex', 0.0)))
         beta = float(spec.get('beta', 0.0))
@@ -80,11 +62,9 @@ class FourierManager:
 
     @staticmethod
     def _scale_scaling(spec: Dict[str, Any], freq: float) -> float:
-        """Trivial scaling: constant amplitude across frequency."""
         return float(spec.get('amp', 1.0))
 
     def _spectral_scale(self, spec: Dict[str, Any], freq: float) -> float:
-        """Dispatch spectral model type to scaling function."""
         stype = str(spec.get('type', '')).lower()
         if stype == 'powerlaw':
             return self._scale_powerlaw(spec, freq)
@@ -98,39 +78,39 @@ class FourierManager:
 
     @staticmethod
     def map_to_uvgrid(image: np.ndarray, pixel_scale_deg: float) -> Tuple[np.ndarray, float]:
-        """FFT an image to half-plane uv grid (rfft) and return grid & du spacing."""
-        if image.ndim != 2 or image.shape[0] != image.shape[1]:
-            raise ValueError("image must be square 2D array")
-        N = image.shape[0]
+        # Flip vertical axis (legacy convention) then FFT to uv half-plane
+        img = np.ascontiguousarray(np.flip(image, axis=0))
+        N = img.shape[0]
         delt_rad = np.deg2rad(abs(pixel_scale_deg))
         du = 1.0 / (N * delt_rad)
-        uv_rfft_shifted = np.fft.fftshift(np.fft.rfft2(np.fft.fftshift(image)), axes=0)
+        uv_rfft_shifted = np.fft.fftshift(np.fft.rfft2(np.fft.fftshift(img)), axes=0)
         return uv_rfft_shifted, du
 
     @staticmethod
     def sample_uv(uv_rfft_shifted: np.ndarray, u: Sequence[float], v: Sequence[float], du: float,
                   dRA: float = 0.0, dDec: float = 0.0, PA: float = 0.0, origin: str = 'upper') -> np.ndarray:
         """Interpolate uv grid at (u,v) with rotation & phase offsets."""
-        u = np.asarray(u); v = np.asarray(v)
-        if u.shape != v.shape:
-            raise ValueError("u and v must have same shape")
-        if origin not in ('upper','lower'):
-            raise ValueError("origin must be 'upper' or 'lower'")
+        # u = np.asarray(u); v = np.asarray(v)
+        
         v_origin = 1.0 if origin == 'upper' else -1.0
         nxy = uv_rfft_shifted.shape[0]
-        if uv_rfft_shifted.shape[1] != nxy//2 + 1:
-            raise ValueError("uv_rfft_shifted second dimension inconsistent with first")
+        
         cos_PA = np.cos(PA); sin_PA = np.sin(PA)
+
         urot = u * cos_PA - v * sin_PA
         vrot = u * sin_PA + v * cos_PA
+
         dRArot = dRA * cos_PA - dDec * sin_PA
         dDecrot = dRA * sin_PA + dDec * cos_PA
+
         uroti = np.abs(urot) / du
         vroti = nxy/2.0 + v_origin * vrot / du
         uneg = urot < 0.0
         vroti[uneg] = nxy/2.0 - v_origin * vrot[uneg]/du
+
         u_axis = np.linspace(0.0, nxy//2, nxy//2 + 1)
         v_axis = np.linspace(0.0, nxy - 1, nxy)
+        
         f_re = RectBivariateSpline(v_axis, u_axis, uv_rfft_shifted.real, kx=1, ky=1, s=0)
         f_im = RectBivariateSpline(v_axis, u_axis, uv_rfft_shifted.imag, kx=1, ky=1, s=0)
         f_amp = RectBivariateSpline(v_axis, u_axis, np.abs(uv_rfft_shifted), kx=1, ky=1, s=0)
@@ -231,12 +211,12 @@ class FourierManager:
             return a[0]
         return a
 
-    def _convert_model_map_to_jybeam(self, model_name, entry):
-        """Convert a model map to Jy/beam applying spectral rules.
+    def _convert_model_map_to_jypix(self, model_name, entry):
+        """Convert model image to Jy/pixel (no beam normalization).
 
-        For tSZ spectra: apply relativistic correction & Compton-y to Jy/beam.
-        For non-tSZ spectra: apply analytic spectral scaling in image domain.
-        Returns (image_JyPerBeam, pixel_scale_deg).
+        tSZ: y * dI/dy (including relativistic correction).
+        non-tSZ: apply analytic spectral scale factor (assumed already Jy-like per pixel).
+        Returns (image_JyPerPixel, pixel_scale_deg).
         """
         header = entry['header']
         model_plane = self._extract_plane(entry['model_data'])
@@ -257,50 +237,37 @@ class FourierManager:
 
         # Spectrum type (standardized structure) ----------------------------------
         spec_type = self.models[model_name]['parameters']['spectrum']['type']
-        is_tsz = isinstance(spec_type, str) and spec_type.lower() == 'tsz'
+        tsz_bool = isinstance(spec_type, str) and spec_type.lower() == 'tsz'
 
-        if not is_tsz:
+        if not tsz_bool:
             spec = self.models[model_name]['parameters']['spectrum']
             scale = self._spectral_scale(spec, freq)
             return model_plane * scale, ipix_deg
 
         # tSZ conversion path ------------------------------------------------------
         # Temperature extraction (optional) ---------------------------------------
-        Te = 0.0
-        model_block = self.models[model_name]['parameters'].get('model', {})
-        Te = 0.0
-        for key in ('Te','Temperature','temperature','kTe','Tout'):
-            if key in model_block and model_block[key] is not None:
-                Te = float(model_block[key])
-                break
+        Te = self.models['0459_1']['parameters']['model']['temperature']
 
-        # Relativistic correction coefficients
         osz = 4
-        imfreq = [freq, freq]
-        imdelt = [ipix_deg, jpix_deg]
-        coeffs = np.array([computeFlatCompton(imfreq, imdelt, order) for order in range(1+osz)])
-        corr = comptonCorrect(coeffs, Te=Te)
-        with np.errstate(divide='ignore', invalid='ignore'):
-            inv_corr = 1.0 / corr if np.all(corr) else 1.0
-        model_plane = model_plane * inv_corr
-
-        # y -> Jy/pixel then to Jy/beam
-        jy_pix = model_plane * ytszToJyPix(freq, ipix_deg, jpix_deg)
-        bmaj = header.get('BMAJ'); bmin = header.get('BMIN')
-        if not bmaj or not bmin:
-            raise ValueError('Beam parameters (BMAJ/BMIN) required for Jy/beam conversion.')
-        beam_conv = JyBeamToJyPix(ipix_deg, jpix_deg, bmaj, bmin)
-        return jy_pix / beam_conv, ipix_deg
+        # Compute relativistic series coefficients (flat band; single freq treated as degenerate interval)
+        # Legacy does band-averaged comptonFlat first if starting in Jy; here we construct y->Jy/pix factor directly.
+        series = np.array([
+            ytszToJyPix(freq, ipix_deg, jpix_deg) * comptonRelativ(freq, order)
+            for order in range(1 + osz)
+        ])
+        conv = comptonCorrect(series, Te=Te)  # full dI/dy including relativistic corrections
+        jy_pix = model_plane * conv
+        return jy_pix, ipix_deg
 
     # ------------------------------------------------------------------
     # New sampling API against matched_models structure
     # ------------------------------------------------------------------
     def fft_map(self, model_name, data_name, field_key, spw_key):
         """Produce uv grid (half-plane) for a model/data/spw combination."""
-        maps = self.matched_models[model_name][data_name]['maps']
-        entry = maps[field_key][spw_key]
-        jy_beam_image, pix_deg = self._convert_model_map_to_jybeam(model_name, entry)
-        uv_grid, du = self.map_to_uvgrid(jy_beam_image, pix_deg)
+        img                  = self.matched_models[model_name][data_name]['maps'][field_key][spw_key]
+        img_jypix, pix_deg   = self._convert_model_map_to_jypix(model_name, img)
+        self.map_for_testing = img_jypix  # for inspection
+        uv_grid, du          = self.map_to_uvgrid(img_jypix, pix_deg)
         return {'uv': uv_grid, 'du': du, 'pixscale_deg': pix_deg}
 
     def sample_fft(self, model_name, data_name, field_key, spw_key):

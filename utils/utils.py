@@ -102,7 +102,7 @@ def ykszToJyPix(freq,ipix,jpix):
   factor  = getJynorm()
   factor *= (x**4)*np.exp(x)/(np.expm1(x)**2)
   factor *= np.abs(ipix*jpix)*(np.pi/1.8e2)*(np.pi/1.8e2)
-  return -factor
+  return factor
 
 # Compton y to Kelvin CMB
 # ----------------------------------------------------------------------
