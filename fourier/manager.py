@@ -120,6 +120,7 @@ class FourierManager:
         ImInt[uneg] *= -1.0
         PhaseInt = np.angle(ReInt + 1j * ImInt)
         theta = urot * dRArot + vrot * dDecrot
+
         return AmpInt * (np.cos(theta + PhaseInt) + 1j * np.sin(theta + PhaseInt))
 
     @staticmethod
