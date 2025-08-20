@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 import copy
 import os
@@ -188,7 +189,12 @@ class PlotRadialDistributions:
         return UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, UVdist_sorted[bins], bin_cs
 
     def plot_radial_distributions(self, nbins=20, save_plots=True, output_dir='../plots/uvplots/', 
-                                custom_phase_center=None, use_style=True, data_name: str | None = None, **kwargs):
+                                custom_phase_center=None, use_style=True, data_name: str | None = None,
+                                model_name: str | None = None,
+                                n_model_pts: int = 500, r_min_k: float = 0.1, r_max_k: float = 20.0,
+                                axis: str = 'u', cache_model: bool = True,
+                                separate_legends: bool = True,
+                                **kwargs):
         """
         Plot radial UV distributions.
 
@@ -222,30 +228,104 @@ class PlotRadialDistributions:
         fig, axes = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [4, 1], 'hspace': 0.0})
         fig.set_figwidth(8)
         fig.set_figheight(6)
-        
-        # Initialize color counter
+
+        # Data plotting -------------------------------------------------
         color_idx = 0
-        
+        data_handles = []
         for i, name in enumerate(dataset_names):
-            # Get the appropriate nbins for this dataset
             current_nbins = nbins_list[i]
-            
-            # Get binned data with optional custom phase center
             UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_centers = self.get_binned_uvdatapoints(
                 name, current_nbins, custom_phase_center
             )
-            
-            # Create the plot with color and label
-            self._plot_single_radial_distribution(
-                UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, 
-                bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx, **kwargs
+            h_real = self._plot_single_radial_distribution(
+                UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors,
+                bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
+                label_imag=False, **kwargs
             )
+            data_handles.append(h_real)
             color_idx += 1
-        
+
+        # Model overlays -----------------------------------------------
+        model_linestyles_map = {}
+        if hasattr(self, 'matched_models') and hasattr(self, 'fft_map') and hasattr(self, 'sample_uv'):
+            # Determine phase center for models (same logic as data)
+            central_field = self.find_central_field(dataset_names[0])
+            if custom_phase_center is not None:
+                central_phase_center_models = custom_phase_center
+            else:
+                central_phase_center_models = self.uvdata[dataset_names[0]][central_field]['phase_center']
+
+            # Collect candidate models: must have map for central_field with any spw
+            model_entries = []  # list of (model_name, spw_key)
+            for m, mdat in getattr(self, 'matched_models', {}).items():
+                if dataset_names[0] not in mdat:
+                    continue
+                maps = mdat[dataset_names[0]].get('maps', {})
+                if central_field in maps and maps[central_field]:
+                    first_spw = next(iter(maps[central_field].keys()))
+                    model_entries.append((m, first_spw))
+
+            if model_name is not None:
+                model_entries = [me for me in model_entries if me[0] == model_name]
+                if not model_entries:
+                    print(f"Model '{model_name}' not available for central field '{central_field}'; skipping model curves.")
+
+            if model_entries:
+                base_linestyles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 2)), (0, (1, 1)), (0, (5, 1, 1, 1))]
+                for mi, (mname, _) in enumerate(model_entries):
+                    model_linestyles_map[mname] = base_linestyles[mi % len(base_linestyles)]
+
+                for di, dset in enumerate(dataset_names):
+                    dataset_color = f"C{di % 10}"
+                    # Phase center of this dataset's central field
+                    try:
+                        field_phase_center = self.uvdata[dset][central_field]['phase_center']
+                    except KeyError:
+                        field_phase_center = central_phase_center_models
+                        
+                    # Always compute offset (zero if identical)
+                    dRA_rad_model = np.deg2rad(central_phase_center_models[0] - field_phase_center[0])
+                    dDec_rad_model = np.deg2rad(central_phase_center_models[1] - field_phase_center[1])
+                    for mname, spw_used in model_entries:
+                        try:
+                            k_vals, real_line, imag_line = self._get_or_compute_model_slice(
+                                mname, dset, central_field, spw_used,
+                                n_model_pts, r_min_k, r_max_k, axis,
+                                cache=cache_model,
+                                dRA_rad=dRA_rad_model, dDec_rad=dDec_rad_model
+                            )
+                        except Exception as e:  # noqa
+                            print(f"Failed model slice for {mname} ({dset}): {e}")
+                            continue
+                        ls = model_linestyles_map[mname]
+                        axes[0].plot(k_vals, real_line * 1e3, lw=2.0, ls=ls, c=dataset_color, label='__nolegend__')
+                        axes[1].plot(k_vals, imag_line * 1e3, lw=2.0, ls=ls, c=dataset_color, label='__nolegend__')
+        else:
+            if model_name is not None:
+                print("Model plotting requested but required attributes (matched_models, fft_map, sample_uv) missing.")
+
         plt.tight_layout()
-        
-        # Add legends to both panels
-        axes[0].legend(frameon=True, loc='lower right')
+
+        # Legends ------------------------------------------------------
+        if separate_legends:
+            data_labels = [f"{dn}" for dn in dataset_names]
+            # Build proxy handles for real-part markers (match colors)
+            proxy_handles = []
+            for i, dn in enumerate(dataset_names):
+                color = f"C{i % 10}"
+                proxy_handles.append(Line2D([0], [0], ls='', marker='D', markerfacecolor='white',
+                                            markeredgecolor=color, color=color, label=dn))
+            leg_data = axes[0].legend(proxy_handles, data_labels, frameon=False, loc='lower right', fontsize=9, title='Data')
+            if model_linestyles_map:
+                model_legend_handles = [Line2D([0], [0], color='black', lw=2.0, linestyle=ls, label=mn)
+                                        for mn, ls in model_linestyles_map.items()]
+                leg_models = axes[0].legend(model_legend_handles,
+                                            [h.get_label() for h in model_legend_handles],
+                                            frameon=False, loc='lower left', fontsize=9, title='Models')
+                # Preserve both legends on same axes
+                axes[0].add_artist(leg_data)
+        else:
+            axes[0].legend(frameon=False, loc='lower right', fontsize=9)
         
         if save_plots:
             filename = 'UVradial_data_combined.png' if data_name is None else f'UVradial_{data_name}.png'
@@ -257,7 +337,8 @@ class PlotRadialDistributions:
 
     
     def _plot_single_radial_distribution(self, UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, 
-                                       bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx, **kwargs):
+                                       bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
+                                       label_imag: bool = True, **kwargs):
         """
         Create a single radial distribution plot.
         
@@ -326,7 +407,7 @@ class PlotRadialDistributions:
             'markeredgecolor': color,
             'markerfacecolor': 'white',
             'marker': 'o',
-            'label': f'{name} (Imag)',
+            'label': f'{name} (Imag)' if label_imag else '__nolegend__',
             'alpha': errorbar_kwargs_imag.get('alpha', 0.8)
         })
         
@@ -352,3 +433,71 @@ class PlotRadialDistributions:
             ax.text(0.03, 0.97, f'{self.target}', transform=axes[0].transAxes, 
                    fontsize=10, verticalalignment='top', 
                    bbox=dict(boxstyle='round,pad=0.3', edgecolor='black', facecolor='white'))
+        return errorbar_kwargs.get('handle', ax)  # return axis for handle capture (we'll just return ax)
+
+    # ------------------------------------------------------------------
+    # Model slice helper
+    # ------------------------------------------------------------------
+    def _get_or_compute_model_slice(self, model_name: str, data_name: str,
+                                     field_key: str, spw_key: str,
+                                     npts: int, r_min_k: float, r_max_k: float,
+                                     axis: str = 'u', cache: bool = True,
+                                     dRA_rad: float = 0.0, dDec_rad: float = 0.0):
+        """Return (k_vals, real, imag) for a model's visibility slice.
+
+        Sampling is along a single axis (u or v) with the other set to zero.
+        k_vals are in kλ (10^3 wavelengths). r_min_k and r_max_k define the
+        log-spaced sampling region (inclusive) in kλ.
+        """
+        axis = axis.lower()
+        if axis not in ('u', 'v'):
+            raise ValueError("axis must be 'u' or 'v'")
+
+        # Access model map -> uv grid
+        uv_entry = self.fft_map(model_name, data_name, field_key, spw_key)
+        uv_grid = uv_entry['uv']
+        du = uv_entry['du']  # wavelength units
+        nxy = uv_grid.shape[0]
+        # Max positive u in grid half-plane
+        u_max = du * (nxy // 2)
+        max_k_supported = u_max / 1e3
+        if r_max_k > max_k_supported:
+            r_max_k_eff = max_k_supported * 0.999  # slight margin
+            print(f"Truncating r_max_k from {r_max_k} to {r_max_k_eff:.3f} (grid support).")
+            r_max_k = r_max_k_eff
+        if r_min_k < du / 1e3:
+            r_min_k = max(r_min_k, du / 1e3)
+
+        # Prepare cache handle
+        cache_store = self.matched_models[model_name][data_name].setdefault('radial_model_line', {})
+        cache_store = cache_store.setdefault(field_key, {}).setdefault(spw_key, {})
+        cache_key = (axis, npts, round(r_min_k, 6), round(r_max_k, 6), round(dRA_rad, 9), round(dDec_rad, 9))
+
+        if cache and cache_key in cache_store:
+            entry = cache_store[cache_key]
+            return entry['k_vals'], entry['real'], entry['imag']
+
+        k_vals = np.logspace(np.log10(r_min_k), np.log10(r_max_k), npts)
+        # Convert to wavelengths
+        r_waves = k_vals * 1e3
+        u_line = r_waves if axis == 'u' else np.zeros_like(r_waves)
+        v_line = np.zeros_like(r_waves) if axis == 'u' else r_waves
+
+        # Interpolate complex visibilities
+        vis_line = self.sample_uv(uv_grid, u_line, v_line, du, dRA=dRA_rad, dDec=dDec_rad)
+        real_line = vis_line.real
+        imag_line = vis_line.imag
+
+        if cache:
+            cache_store[cache_key] = {
+                'k_vals': k_vals,
+                'real': real_line,
+                'imag': imag_line,
+                'axis': axis,
+                'npts': npts,
+                'r_range_k': (r_min_k, r_max_k),
+                'dRA_rad': dRA_rad,
+                'dDec_rad': dDec_rad
+            }
+
+        return k_vals, real_line, imag_line

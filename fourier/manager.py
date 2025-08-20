@@ -264,7 +264,6 @@ class FourierManager:
         """Produce uv grid (half-plane) for a model/data/spw combination."""
         img                  = self.matched_models[model_name][data_name]['maps'][field_key][spw_key]
         img_jypix, pix_deg   = self._convert_model_map_to_jypix(model_name, img)
-        self.map_for_testing = img_jypix  # for inspection
         uv_grid, du          = self.map_to_uvgrid(img_jypix, pix_deg)
         return {'uv': uv_grid, 'du': du, 'pixscale_deg': pix_deg}
 

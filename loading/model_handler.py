@@ -141,9 +141,6 @@ class ModelHandler:
                     'model_data': model_map,
                     'image_data': image_data,
                     'header': header,
-                    'ra_map': ra_map,
-                    'dec_map': dec_map,
-                    'pb_map': pbeam_data
                 }
         return maps
 

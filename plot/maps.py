@@ -126,24 +126,24 @@ class PlotMaps:
         # Proceed with single field/spw plotting (restructured & robust)
         header = entry['header']
         ipix_deg, jpix_deg = self._pixel_scale_deg(header)
-        pb_map_full = entry.get('pb_map')
 
-        plane_pb = self._extract_plane(entry['model_data'])  # y * PB
-        pb_plane = self._extract_plane(pb_map_full)
-        with np.errstate(divide='ignore', invalid='ignore'):
-            y_map = np.where(pb_plane > 0, plane_pb / pb_plane, 0.0) if pb_plane is not None else plane_pb
+        y_map = self._extract_plane(entry['model_data'])  # y * PB
         
         image_plane_jy = self._extract_plane(entry.get('image_data')) if entry.get('image_data') is not None else None
         want_filtered = any(t in ('filtered','residual') for t in map_types)
-        dirty_model = dirty_resid = None
-        if want_filtered:
+        dirty_model = entry.get('dirty_model')
+        dirty_resid = entry.get('dirty_resid')
+        if want_filtered and (dirty_model is None or dirty_resid is None):
             sm_entry = self.matched_models[model_name][data_name]['sampled_model'][fkey][skey]
             u = sm_entry['u']; v = sm_entry['v']; w = sm_entry['weights']
             model_vis = sm_entry['model_vis']; resid_vis = sm_entry['resid_vis']
+            plane_pb = self._extract_plane(entry['model_data'])  # ensure defined
             npix = plane_pb.shape[0]
             pix_deg = abs(header.get('CDELT1') or header.get('CD1_1'))
             dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
             dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
+            entry['dirty_model'] = dirty_model
+            entry['dirty_resid'] = dirty_resid
         
         bmaj = header.get('BMAJ'); bmin = header.get('BMIN')
         _ = JyBeamToJyPix(ipix_deg, jpix_deg, bmaj, bmin) if (bmaj and bmin) else 1.0  # placeholder if needed later

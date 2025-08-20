@@ -107,6 +107,12 @@ class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
             for d in data_list:
                 self._match_single(m, d, notes=notes, save_output=save_output)
 
+    def JvM_clean(self, model_name: str | None = None, data_name: str | None = None, *, notes=None, save_output=None):
+        
+
+        
+        ...
+
     # ------------------------------------------------------------------
     # Output writer helper
     # ------------------------------------------------------------------
@@ -119,10 +125,7 @@ class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
         header = entry['header'].copy()
 
         # Recover Compton-y (remove PB attenuation)
-        plane_pb = self._extract_plane(entry['model_data'])  # (y * PB)
-        pb_map = entry.get('pb_map')
-        with np.errstate(divide='ignore', invalid='ignore'):
-            y_map = np.where(pb_map > 0, plane_pb / pb_map, 0.0)
+        y_map = self._extract_plane(entry['model_data'])  # (y * PB)
 
         # Write Compton-y FITS
         header_y = header.copy(); header_y['BUNIT'] = 'Compton-y'
@@ -134,7 +137,7 @@ class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
         u = uvrec.uwave; v = uvrec.vwave; w = uvrec.suvwght
         model_vis = sm_entry['model_vis']; resid_vis = sm_entry['resid_vis']
         pix_deg = abs(header.get('CDELT1') or header.get('CD1_1'))
-        npix = plane_pb.shape[0]
+        npix = y_map.shape[0]
         dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
         dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
 
@@ -148,6 +151,11 @@ class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
         fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits"), dirty_model.astype(np.float32), header=header_dm, overwrite=True)
         fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits"), dirty_resid.astype(np.float32), header=header_dr, overwrite=True)
 
+        # Persist computed maps inside in-memory structure for easier reuse
+        entry['dirty_model'] = dirty_model.astype(np.float32)
+        entry['dirty_resid'] = dirty_resid.astype(np.float32)
+
+        
     # ------------------------------------------------------------------
     # Inspection helper
     # ------------------------------------------------------------------

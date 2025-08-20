@@ -117,7 +117,7 @@ class PlotPressureProfiles:
                     pass
         
         ax.set_xlabel('Radius (kpc)', fontsize=10)
-        ax.set_ylabel('Pressure (keV cm⁻³ * ysznorm)' , fontsize=10)
+        ax.set_ylabel('Pressure (keV cm⁻³)' , fontsize=10)
         ax.grid(True, alpha=0.3)
         ax.legend()
         ax.set_xlim(r_range)
