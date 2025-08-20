@@ -8,8 +8,6 @@ from ..utils.style import setup_plot_style
 
 class PlotRadialDistributions:
 
-
-    
     def _plot_single_radial_distribution(self, UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, 
                                        bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
                                        label_imag: bool = True, **kwargs):
@@ -222,43 +220,41 @@ class PlotRadialDistributions:
         # Determine phase center to use
         if custom_phase_center is not None:
             central_phase_center = custom_phase_center
-            print(f"Using custom phase center: RA={central_phase_center[0]:.6f}, Dec={central_phase_center[1]:.6f}")
         else:
             # Find central field
             central_field = self.find_central_field(band_name)
             print(f"Using central field: {central_field}")
             central_phase_center = self.uvdata[band_name][central_field]['phase_center']
         
-        # Collect all phase-shifted data
+        # Collect phase-shifted data only for the central field
         all_uvreals = []
         all_uvimags = []
         all_uvdist = []
         all_uvwghts = []
-        
-        for field_name, field_data in self.uvdata[band_name].items():
-            if field_name == 'metadata':
+
+        central_field = self.find_central_field(band_name)
+        field_data = self.uvdata[band_name][central_field]
+
+        # Calculate phase shift needed to move this field to the chosen central phase center
+        field_phase_center = field_data['phase_center']
+        dRA = (central_phase_center[0] - field_phase_center[0]) * 3600  # to arcsec
+        dDec = (central_phase_center[1] - field_phase_center[1]) * 3600  # to arcsec
+
+        # Apply phase shift (will be identity if central_field already equals central_phase_center)
+        shifted_data = self.apply_phase_shift(dRA, dDec, field_data)
+
+        # Collect data from all SPWs in this (central) field
+        for spw_name, spw_data in shifted_data.items():
+            if spw_name == 'phase_center':
                 continue
-                
-            # Calculate phase shift needed
-            field_phase_center = field_data['phase_center']
-            dRA = (central_phase_center[0] - field_phase_center[0]) * 3600  # to arcsec
-            dDec = (central_phase_center[1] - field_phase_center[1]) * 3600  # to arcsec
-            
-            # Apply phase shift
-            shifted_data = self.apply_phase_shift(dRA, dDec, field_data)
-            
-            # Collect data from all SPWs in this field
-            for spw_name, spw_data in shifted_data.items():
-                if spw_name == 'phase_center':
-                    continue
-                    
-                # Calculate UV distance
-                uvdist = np.sqrt(spw_data.uwave**2 + spw_data.vwave**2)
-                
-                all_uvreals.append(spw_data.uvreal)
-                all_uvimags.append(spw_data.uvimag)
-                all_uvdist.append(uvdist)
-                all_uvwghts.append(spw_data.suvwght)
+
+            # Calculate UV distance
+            uvdist = np.sqrt(spw_data.uwave**2 + spw_data.vwave**2)
+
+            all_uvreals.append(spw_data.uvreal)
+            all_uvimags.append(spw_data.uvimag)
+            all_uvdist.append(uvdist)
+            all_uvwghts.append(spw_data.suvwght)
         
         # Concatenate all data
         UVreals = np.concatenate(all_uvreals)
@@ -440,10 +436,13 @@ class PlotRadialDistributions:
             central_phase_center_models = self.uvdata[data_name][field_key]['phase_center']
 
         # dRA/dDec in radians (difference central - field)
+
+        print(model_name, data_name, central_phase_center_models, field_phase_center)
+
         dRA_rad = np.deg2rad(central_phase_center_models[0] - field_phase_center[0])
         dDec_rad = np.deg2rad(central_phase_center_models[1] - field_phase_center[1])
 
-        # Access model map and grid parameters
+        # Access model map and grid parameter
         uv_entry = self.fft_map(model_name, data_name, field_key, spw_key)
         uv_grid = uv_entry['uv']
         du = uv_entry['du']

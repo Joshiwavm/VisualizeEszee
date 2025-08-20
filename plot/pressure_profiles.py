@@ -80,7 +80,8 @@ class PlotPressureProfiles:
                     input_par['gamma'],
                     input_par['ap'], 
                     input_par['c500'], 
-                    input_par['mass']
+                    input_par['mass'],
+                    radial=True
                 )
             elif model_type == 'gnfwPressure':
                 profile = gnfwProfile(
@@ -91,7 +92,8 @@ class PlotPressureProfiles:
                     input_par['e'],
                     input_par['alpha'], 
                     input_par['beta'], 
-                    input_par['gamma']
+                    input_par['gamma'],
+                    radial=True
                 )
             else:  # betaPressure
                 profile = betaProfile(
@@ -100,11 +102,12 @@ class PlotPressureProfiles:
                     input_par['amp'], 
                     input_par['major'],
                     input_par['e'],
-                    input_par['beta']
+                    input_par['beta'],
+                    radial=True
                 )
-
+            
             pressure_interp = np.interp(coord, rs_sample, profile, left=profile[0], right=profile[-1])
-            pressure_phys = pressure_interp * ysznorm 
+            pressure_phys = pressure_interp
 
             label = f"{model_name} ({model_type})"
             line = ax.loglog(r_kpc, pressure_phys, label=label, **plot_kwargs)
