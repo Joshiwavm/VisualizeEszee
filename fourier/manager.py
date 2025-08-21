@@ -128,24 +128,9 @@ class FourierManager:
                      weights: Optional[Sequence[float]] = None,
                      npix: int | None = None,
                      pixel_scale_deg: float | None = None,
-                     normalize: bool = True,
-                     use_jax: bool = True) -> np.ndarray:
+                     normalize: bool = True) -> np.ndarray:
         """Dirty image reconstruction via NUFFT (requires jax + jax_finufft)."""
-        if not use_jax:
-            raise ValueError("vis_to_image requires JAX backend.")
         u = np.asarray(u); v = np.asarray(v); vis = np.asarray(vis)
-        if u.shape != v.shape or u.shape != vis.shape:
-            raise ValueError("u, v, vis must share shape")
-        if npix is None or pixel_scale_deg is None:
-            raise ValueError("npix and pixel_scale_deg required")
-        if weights is None:
-            weights = np.ones_like(u, dtype=float)
-        else:
-            weights = np.asarray(weights, dtype=float)
-        if weights.shape != u.shape:
-            raise ValueError("weights shape mismatch")
-        if weights.size == 0:
-            return np.zeros((npix, npix))
         delt_rad = np.deg2rad(abs(pixel_scale_deg))
         x = -2.0 * np.pi * v * delt_rad
         y =  2.0 * np.pi * u * delt_rad
@@ -158,8 +143,7 @@ class FourierManager:
         grid = jax_finufft.nufft1((npix, npix), coeffs.astype(np.complex128), x, y)
         return np.array(grid.real)
 
-    @staticmethod
-    def _multivis_fields_to_image(fields: Sequence[Dict[str, Any]], npix: int, pixel_scale_deg: float,
+    def _multivis_fields_to_image(self, fields: Sequence[Dict[str, Any]], npix: int, pixel_scale_deg: float,
                                   align: bool = True, normalize: bool = True) -> np.ndarray:
         """Combine multiple fields (optionally phase-align) into a single dirty image.
 
@@ -169,15 +153,17 @@ class FourierManager:
         """
         accum_u, accum_v, accum_vis, accum_w = [], [], [], []
         for fd in fields:
-            u = np.asarray(fd['u']); v = np.asarray(fd['v']); vis = np.asarray(fd['vis'])
-            if align and ('dRA' in fd or 'dDec' in fd):
+
+            print(fd['name'])
+            u = np.asarray(fd['u']); v = np.asarray(fd['v'])
+            w = np.asarray(fd['weights']); vis = np.asarray(fd['vis']) 
+
+            if align:
                 dRA = fd.get('dRA', 0.0); dDec = fd.get('dDec', 0.0)
-                phase = np.exp(2.0 * np.pi * 1j * (u * dRA + v * dDec))
-                vis = vis * phase
-            w = np.asarray(fd.get('weights', np.ones_like(u)))
+                vis = self.phase_shift(vis, u, v, dRA=dRA, dDec=dDec)
+            
             accum_u.append(u); accum_v.append(v); accum_vis.append(vis); accum_w.append(w)
-        if not accum_u:
-            return np.zeros((npix, npix))
+        
         u_all = np.concatenate(accum_u); v_all = np.concatenate(accum_v)
         vis_all = np.concatenate(accum_vis); w_all = np.concatenate(accum_w)
         return FourierManager.vis_to_image(u_all, v_all, vis_all, weights=w_all,
@@ -185,11 +171,12 @@ class FourierManager:
                                            normalize=normalize)
 
     def multivis_to_image(self, model_name: str, data_name: str,
-                          use: str = 'data', fields: Optional[Sequence[str]] = None,
+                          use: str = 'data', 
+                          fields: Optional[Sequence[str]] = None,
                           spws: Optional[Sequence[str]] = None,
-                          npix: Optional[int] = None, pixel_scale_deg: Optional[float] = None,
-                          normalize: bool = True, use_jax: bool = True, calib: float = 1.0,
-                          align: bool = False) -> np.ndarray:
+                          npix: int = 1024, pixel_scale_deg: Optional[float] = None,
+                          normalize: bool = True, calib: float = 1.0,
+                          align: bool = True) -> np.ndarray:
         """Build a dirty image from already-sampled visibilities for a model/data pair.
 
         Parameters
@@ -206,7 +193,7 @@ class FourierManager:
             Output image size in pixels. If None, inferred from model maps (smallest pixel-scale choice).
         pixel_scale_deg : float or None
             Pixel scale in degrees. If None, choose smallest pixel scale among model maps.
-        normalize, use_jax, calib, align : see documentation
+        normalize, calib, align : see documentation
 
         Returns
         -------
@@ -237,11 +224,8 @@ class FourierManager:
         pix_N_map = []
 
         # Determine central phase center for optional alignment
-        try:
-            central_field = self.find_central_field(data_name)
-            central_phase = self.uvdata[data_name][central_field]['phase_center']
-        except Exception:
-            central_phase = None
+        central_field = self.find_central_field(data_name)
+        central_phase = self.uvdata[data_name][central_field]['phase_center']
 
         # Iterate sampled entries
         for field_key, spw_map in sampled.items():
@@ -252,13 +236,13 @@ class FourierManager:
                 if (spws is not None) and (spw_key not in spws):
                     continue
 
-                # collect pixel-scale info from corresponding model map if available
-                try:
-                    fft_e = self.fft_map(model_name, data_name, field_key, spw_key)
-                    pixel_scales.append(abs(fft_e.get('pixscale_deg', np.nan)))
-                    pix_N_map.append((fft_e['uv'].shape[0], fft_e.get('pixscale_deg', None)))
-                except Exception:
-                    pass
+                # collect pixel-scale info directly from stored map header
+                cd1 = self.matched_models[model_name][data_name]['maps'][field_key][spw_key]['header'].get('CDELT1') or \
+                        self.matched_models[model_name][data_name]['maps'][field_key][spw_key]['header'].get('CD1_1')
+                pixel_scales.append(abs(cd1))
+
+                plane = self._extract_plane(self.matched_models[model_name][data_name]['maps'][field_key][spw_key].get('model_data'))
+                pix_N_map.append((int(np.asarray(plane).shape[0]) if plane is not None else np.nan, cd1))
 
                 # Choose which visibility to use
                 if use == 'data':
@@ -274,45 +258,28 @@ class FourierManager:
                     'u': entry['u'],
                     'v': entry['v'],
                     'vis': vis,
-                    'weights': entry.get('weights', entry.get('uvwghts', None) or entry.get('weights', None) or entry.get('wgt', None) or np.ones_like(entry['u']))
+                    'weights': entry['weights'],
+                    'name': model_name + data_name + field_key + spw_key
                 }
 
                 # optional alignment offsets (degrees)
                 if align and (central_phase is not None):
                     field_phase = self.uvdata[data_name].get(field_key, {}).get('phase_center')
-                    if field_phase is not None:
-                        dRA = central_phase[0] - field_phase[0]
-                        dDec = central_phase[1] - field_phase[1]
-                        fd['dRA'] = dRA
-                        fd['dDec'] = dDec
+                    dRA = np.deg2rad(central_phase[0] - field_phase[0])
+                    dDec = np.deg2rad(central_phase[1] - field_phase[1])
+                    fd['dRA'] = dRA
+                    fd['dDec'] = dDec
 
                 field_dicts.append(fd)
-
-        if not field_dicts:
-            raise ValueError("No sampled visibilities found for given model/data and filters")
 
         # Choose pixel_scale_deg: smallest if mixed
         if pixel_scale_deg is None and pixel_scales:
             pixel_scale_deg = float(np.nanmin(pixel_scales))
 
-        # Choose npix: if not provided, pick N associated with smallest pixel scale if available
-        if npix is None:
-            if pix_N_map:
-                # find entry with pixscale equal to chosen pixel_scale_deg (or smallest)
-                best_N = pix_N_map[0][0]
-                if pixel_scale_deg is not None:
-                    for N, p in pix_N_map:
-                        if p is not None and abs(p - pixel_scale_deg) < 1e-12:
-                            best_N = N; break
-                npix = int(best_N)
-            else:
-                # fallback default
-                npix = 512
-
         # Call the low-level helper to build the image
-        image = FourierManager._multivis_fields_to_image(field_dicts, npix=npix,
-                                                        pixel_scale_deg=pixel_scale_deg,
-                                                        align=align, normalize=normalize)
+        image = self._multivis_fields_to_image(field_dicts, npix=npix,
+                                                pixel_scale_deg=pixel_scale_deg,
+                                                align=align, normalize=normalize)
         return image
 
 
@@ -333,11 +300,12 @@ class FourierManager:
     @staticmethod
     def phase_shift(vis: Sequence[complex], u: Sequence[float], v: Sequence[float],
                     dRA: float = 0.0, dDec: float = 0.0) -> np.ndarray:
-        """Apply phase shift corresponding to RA/Dec offsets (degrees)."""
+        """Apply phase shift corresponding to RA/Dec offsets (radians).
+        """
         vis = np.asarray(vis); u = np.asarray(u); v = np.asarray(v)
         if vis.shape != u.shape:
             raise ValueError("vis and u/v shapes mismatch")
-        phase = np.exp(2.0 * np.pi * 1j * (u * dRA + v * dDec))
+        phase = np.exp(-2j * np.pi * (u * dRA + v * dDec))
         return vis * phase
 
     @staticmethod
