@@ -159,16 +159,21 @@ class FourierManager:
         return np.array(grid.real)
 
     @staticmethod
-    def multi_field_dirty(fields: Sequence[Dict[str, Any]], npix: int, pixel_scale_deg: float,
-                          align: bool = True, normalize: bool = True) -> np.ndarray:
-        """Combine multiple fields (optionally phase-align) into a single dirty image."""
+    def _multivis_fields_to_image(fields: Sequence[Dict[str, Any]], npix: int, pixel_scale_deg: float,
+                                  align: bool = True, normalize: bool = True) -> np.ndarray:
+        """Combine multiple fields (optionally phase-align) into a single dirty image.
+
+        This is a low-level helper that accepts an iterable of field dicts with keys
+        'u','v','vis' and optional 'weights','dRA','dDec'. Use the instance method
+        `multivis_to_image` to build these field dicts from sampled_model entries.
+        """
         accum_u, accum_v, accum_vis, accum_w = [], [], [], []
         for fd in fields:
             u = np.asarray(fd['u']); v = np.asarray(fd['v']); vis = np.asarray(fd['vis'])
             if align and ('dRA' in fd or 'dDec' in fd):
                 dRA = fd.get('dRA', 0.0); dDec = fd.get('dDec', 0.0)
                 phase = np.exp(2.0 * np.pi * 1j * (u * dRA + v * dDec))
-                vis *= phase
+                vis = vis * phase
             w = np.asarray(fd.get('weights', np.ones_like(u)))
             accum_u.append(u); accum_v.append(v); accum_vis.append(vis); accum_w.append(w)
         if not accum_u:
@@ -178,6 +183,139 @@ class FourierManager:
         return FourierManager.vis_to_image(u_all, v_all, vis_all, weights=w_all,
                                            npix=npix, pixel_scale_deg=pixel_scale_deg,
                                            normalize=normalize)
+
+    def multivis_to_image(self, model_name: str, data_name: str,
+                          use: str = 'data', fields: Optional[Sequence[str]] = None,
+                          spws: Optional[Sequence[str]] = None,
+                          npix: Optional[int] = None, pixel_scale_deg: Optional[float] = None,
+                          normalize: bool = True, use_jax: bool = True, calib: float = 1.0,
+                          align: bool = False) -> np.ndarray:
+        """Build a dirty image from already-sampled visibilities for a model/data pair.
+
+        Parameters
+        ----------
+        model_name, data_name : str
+            Keys into `self.matched_models` and `self.uvdata`.
+        use : {'data','model','resid'}
+            Which visibilities to image.
+        fields : sequence[str] or None
+            Subset of field keys to include (None => all sampled fields).
+        spws : sequence[str] or None
+            Subset of spws to include (None => all sampled spws).
+        npix : int or None
+            Output image size in pixels. If None, inferred from model maps (smallest pixel-scale choice).
+        pixel_scale_deg : float or None
+            Pixel scale in degrees. If None, choose smallest pixel scale among model maps.
+        normalize, use_jax, calib, align : see documentation
+
+        Returns
+        -------
+        image : np.ndarray
+            Dirty image (npix x npix)
+        """
+        # Validate presence
+        if model_name not in self.matched_models:
+            raise ValueError(f"Model '{model_name}' not found in matched_models")
+        if data_name not in self.matched_models[model_name]:
+            raise ValueError(f"Data '{data_name}' not found for model '{model_name}'")
+
+        mm_entry = self.matched_models[model_name][data_name]
+
+        # Ensure sampled_model exists; if not, call sample_fft for each map entry
+        sampled = mm_entry.get('sampled_model', {})
+        if not sampled:
+            maps = mm_entry.get('maps', {})
+            for field_key, spw_dict in maps.items():
+                for spw_key in spw_dict.keys():
+                    # populate sampled_model entries using provided calib
+                    self.sample_fft(model_name, data_name, calib, field_key, spw_key)
+            sampled = mm_entry.get('sampled_model', {})
+
+        # Build list of field dicts for the low-level helper
+        field_dicts = []
+        pixel_scales = []
+        pix_N_map = []
+
+        # Determine central phase center for optional alignment
+        try:
+            central_field = self.find_central_field(data_name)
+            central_phase = self.uvdata[data_name][central_field]['phase_center']
+        except Exception:
+            central_phase = None
+
+        # Iterate sampled entries
+        for field_key, spw_map in sampled.items():
+            if (fields is not None) and (field_key not in fields):
+                continue
+            # attempt to get pixel scale info from fft_map for this field/spw
+            for spw_key, entry in spw_map.items():
+                if (spws is not None) and (spw_key not in spws):
+                    continue
+
+                # collect pixel-scale info from corresponding model map if available
+                try:
+                    fft_e = self.fft_map(model_name, data_name, field_key, spw_key)
+                    pixel_scales.append(abs(fft_e.get('pixscale_deg', np.nan)))
+                    pix_N_map.append((fft_e['uv'].shape[0], fft_e.get('pixscale_deg', None)))
+                except Exception:
+                    pass
+
+                # Choose which visibility to use
+                if use == 'data':
+                    vis = entry['data_vis']
+                elif use == 'model':
+                    vis = entry['model_vis']
+                elif use == 'resid':
+                    vis = entry['resid_vis']
+                else:
+                    raise ValueError("use must be 'data', 'model' or 'resid'")
+
+                fd = {
+                    'u': entry['u'],
+                    'v': entry['v'],
+                    'vis': vis,
+                    'weights': entry.get('weights', entry.get('uvwghts', None) or entry.get('weights', None) or entry.get('wgt', None) or np.ones_like(entry['u']))
+                }
+
+                # optional alignment offsets (degrees)
+                if align and (central_phase is not None):
+                    field_phase = self.uvdata[data_name].get(field_key, {}).get('phase_center')
+                    if field_phase is not None:
+                        dRA = central_phase[0] - field_phase[0]
+                        dDec = central_phase[1] - field_phase[1]
+                        fd['dRA'] = dRA
+                        fd['dDec'] = dDec
+
+                field_dicts.append(fd)
+
+        if not field_dicts:
+            raise ValueError("No sampled visibilities found for given model/data and filters")
+
+        # Choose pixel_scale_deg: smallest if mixed
+        if pixel_scale_deg is None and pixel_scales:
+            pixel_scale_deg = float(np.nanmin(pixel_scales))
+
+        # Choose npix: if not provided, pick N associated with smallest pixel scale if available
+        if npix is None:
+            if pix_N_map:
+                # find entry with pixscale equal to chosen pixel_scale_deg (or smallest)
+                best_N = pix_N_map[0][0]
+                if pixel_scale_deg is not None:
+                    for N, p in pix_N_map:
+                        if p is not None and abs(p - pixel_scale_deg) < 1e-12:
+                            best_N = N; break
+                npix = int(best_N)
+            else:
+                # fallback default
+                npix = 512
+
+        # Call the low-level helper to build the image
+        image = FourierManager._multivis_fields_to_image(field_dicts, npix=npix,
+                                                        pixel_scale_deg=pixel_scale_deg,
+                                                        align=align, normalize=normalize)
+        return image
+
+
 
     @staticmethod
     def residual_vis(data_vis: Sequence[complex], model_vis: Sequence[complex]) -> np.ndarray:
@@ -268,7 +406,7 @@ class FourierManager:
         uv_grid, du          = self.map_to_uvgrid(img_jypix, pix_deg)
         return {'uv': uv_grid, 'du': du, 'pixscale_deg': pix_deg}
 
-    def sample_fft(self, model_name, data_name, field_key, spw_key):
+    def sample_fft(self, model_name, data_name, calib, field_key, spw_key):
         """Sample model uv grid at observed (u,v) coordinates; store results."""
 
         # get uvdata
@@ -283,12 +421,12 @@ class FourierManager:
 
         # compute residuals
         data_vis = real + 1j * imag
-        resid_vis = data_vis - model_vis
+        resid_vis = data_vis - model_vis * calib
 
         # store sampled model
         sm_store = self.matched_models[model_name][data_name].setdefault('sampled_model', {})
         sm_store.setdefault(field_key, {})[spw_key] = {
-            'model_vis': model_vis,
+            'model_vis': model_vis * calib,
             'data_vis': data_vis,
             'resid_vis': resid_vis,
             'u': u,
@@ -298,8 +436,8 @@ class FourierManager:
         }
         return model_vis
 
-    def map_to_vis(self, model_name, data_name, field_key, spw_key):
+    def map_to_vis(self, model_name, data_name, calib, field_key, spw_key):
         """Convenience wrapper returning (model_vis, resid_vis)."""
-        self.sample_fft(model_name, data_name, field_key, spw_key)
+        self.sample_fft(model_name, data_name, calib, field_key, spw_key)
         entry = self.matched_models[model_name][data_name]['sampled_model'][field_key][spw_key]
         return entry['model_vis'], entry['resid_vis']

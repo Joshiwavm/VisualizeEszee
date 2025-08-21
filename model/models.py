@@ -42,7 +42,7 @@ def a10Profile(grid,offset,amp,major,e,alpha,beta,gamma,ap,c500,mass, limdist=np
 def gnfwRadialProfile(x,alpha,beta,gamma): 
     return (x**(-gamma))*((1.00+(x**alpha))**((gamma-beta)/alpha))
 
-def gnfwProfileIntegrand(x,xialpha,beta,gamma): 
+def gnfwProfileIntegrand(x,xi,alpha,beta,gamma): 
     return (x**(-gamma))*((1.00+(x**alpha))**((gamma-beta)/alpha))*x/((x*x-xi*xi)**0.50)
 
 # gNFW model integral
@@ -50,7 +50,6 @@ def gnfwProfileIntegrand(x,xialpha,beta,gamma):
 def _gnfwProfileIntegral(x,alpha,beta,gamma,limdist=np.inf,epsrel=1.00E-06,radial=False): 
     if not radial: return 2.00*quad(gnfwProfileIntegrand,x,limdist,args=(x,alpha,beta,gamma),epsrel=epsrel)[0]
     else: return gnfwRadialProfile(x,alpha,beta,gamma)
-        
 gnfwProfileIntegral = np.vectorize(_gnfwProfileIntegral)
 
 # Integrated elliptical gNFW model profile

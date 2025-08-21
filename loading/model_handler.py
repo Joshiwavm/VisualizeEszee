@@ -167,20 +167,20 @@ class ModelHandler:
                                  input_par['mass'])
         elif model_type == 'gnfwPressure':
             profile = gnfwProfile(rs_sample, 
-                                input_par.get('offset'), 
-                                input_par['amp'], 
-                                input_par.get('major'), 
-                                input_par.get('e'),
-                                input_par['alpha'], 
-                                input_par['beta'], 
-                                input_par['gamma'])
+                                  input_par.get('offset'), 
+                                  input_par['amp'], 
+                                  input_par.get('major'), 
+                                  input_par.get('e'),
+                                  input_par['alpha'], 
+                                  input_par['beta'], 
+                                  input_par['gamma'])
         elif model_type == 'betaPressure':
             profile = betaProfile(rs_sample, 
-                                input_par.get('offset'), 
-                                input_par['amp'], 
-                                input_par.get('major'), 
-                                input_par.get('e'), 
-                                input_par['beta'])
+                                  input_par.get('offset'), 
+                                  input_par['amp'], 
+                                  input_par.get('major'), 
+                                  input_par.get('e'), 
+                                  input_par['beta'])
         
         r_grid = self._make_radial_grid(ra_map, dec_map, parameters['model'])
         

@@ -343,6 +343,7 @@ class PlotRadialDistributions:
             color_idx += 1
 
         # Model overlays -----------------------------------------------
+        # This is not taking into account calibration parameter.
         model_linestyles_map = {}
         if hasattr(self, 'matched_models') and hasattr(self, 'fft_map') and hasattr(self, 'sample_uv'):
             base_linestyles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 2)), (0, (1, 1)), (0, (5, 1, 1, 1))]
