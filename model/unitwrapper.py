@@ -17,9 +17,6 @@ class TransformInput:
         self.p = model_params
         self.model_type = model_type
 
-    def generate(self) -> Dict[str, Any]:  # preferred
-        return self.run()
-
     def run(self) -> Dict[str, Any]:  # backward compatibility
         base = {
             'offset': float(self.p.get('offset', 0.0)),  # offset may default to 0
@@ -102,3 +99,5 @@ class TransformInput:
         r_s_mpc = (np.deg2rad(r_s) * cosmo.angular_diameter_distance(z).to(u.Mpc)).value
 
         return {**base, 'amp': p_amp, 'major': r_s_mpc, 'alpha': alpha, 'beta': beta, 'gamma': gamma, 'phys_norm': True}
+
+    # TODO: add the rest of the models 

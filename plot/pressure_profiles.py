@@ -57,7 +57,7 @@ class PlotPressureProfiles:
             r_mpc = r_kpc / 1000.0
 
             xform = TransformInput(model_params, model_type)
-            input_par = xform.generate()
+            input_par = xform.run()
 
             major = input_par.get('major')
 

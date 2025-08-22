@@ -4,10 +4,6 @@ from astropy import units as u
 from scipy.integrate import quad
 import numpy as np
 
-def printError(message):
-    print(message)
-    raise ValueError(42)
-
 def elos(e): return 1.00-(1.00-e)/np.sqrt(0.50*(1.00+(1.00-e)**2))
 
 # 3D A10 model profile
@@ -35,8 +31,6 @@ def a10Profile(grid,offset,amp,major,e,alpha,beta,gamma,ap,c500,mass, limdist=np
     ellipse = (1.00-elos(e)) if freeLS is None else freeLS
     return offset+amp*major*ellipse*integral
 
-
-
 # 3D gNFW model profile
 # ----------------------------------------------------------------------
 def gnfwRadialProfile(x,alpha,beta,gamma): 
@@ -60,7 +54,6 @@ def gnfwProfile(grid,offset,amp,major,e,alpha,beta,gamma,limdist=np.inf,epsrel=1
     else: integral[grid<=limdist] = _gnfwProfileIntegral(grid[grid<=limdist],alpha,beta,gamma,limdist,epsrel,radial)
     ellipse = (1.00-elos(e)) if freeLS is None else freeLS
     return offset+amp*major*ellipse*integral
-
 
 # 3D beta model profile
 # ----------------------------------------------------------------------

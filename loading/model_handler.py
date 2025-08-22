@@ -97,21 +97,20 @@ class ModelHandler:
                     fits_file = binvis.replace('fid', str(field)).replace('sid', str(spw)) + '.image.fits'
                 else:
                     fits_file = f"output/{dmeta.get('array')}/output_{dmeta.get('band')}_{dmeta.get('array')}.im.field-{field}.spw-{spw}.image.fits"
-                try:
-                    with fits.open(fits_file) as hdul:
-                        header = hdul[0].header.copy()
-                        image_data = hdul[0].data.copy()
-                        nx, ny = header['NAXIS1'], header['NAXIS2']
-                        cdelt1, cdelt2 = header['CDELT1'], header['CDELT2']
-                        crval1, crval2 = header['CRVAL1'], header['CRVAL2']
-                except FileNotFoundError:
-                    print(f"  Warning: FITS file not found: {fits_file}")
-                    continue
+
+                with fits.open(fits_file) as hdul:
+                    header = hdul[0].header.copy()
+                    image_data = hdul[0].data.copy()
+                    nx, ny = header['NAXIS1'], header['NAXIS2']
+                    cdelt1, cdelt2 = header['CDELT1'], header['CDELT2']
+                    crval1, crval2 = header['CRVAL1'], header['CRVAL2']
+
                 x_coords = np.arange(-nx/2, nx/2, 1.) + 0.5
                 y_coords = np.arange(-ny/2, ny/2, 1.) - 0.5
                 X, Y = np.meshgrid(x_coords, y_coords)
                 ra_map = -1 * X * np.abs(cdelt1) / np.cos(np.deg2rad(crval2)) + crval1
                 dec_map = Y * np.abs(cdelt2) + crval2
+
                 if model_info['source'] == 'parameters':
                     model_map = self._generate_model_from_parameters(
                         model_info['type'], model_info['parameters'], ra_map, dec_map, header
@@ -127,15 +126,12 @@ class ModelHandler:
                         model_map = self._generate_model_from_quantiles(
                             model_info, quantile_type, ra_map, dec_map, header
                         )
+                
                 pbeam_file = fits_file.replace('.image.fits', '.pbeam.fits')
 
-                try:
-                    with fits.open(pbeam_file) as pbeam_hdul:
-                        pbeam_data = pbeam_hdul[0].data
-                        model_map = model_map * pbeam_data
-                except Exception as e:
-                    print(f"  Warning: Error loading primary beam: {e}")
-                    pbeam_data = np.ones_like(model_map)
+                with fits.open(pbeam_file) as pbeam_hdul:
+                    pbeam_data = pbeam_hdul[0].data
+                    model_map = model_map * pbeam_data
 
                 maps[field_key][spw_key] = {
                     'model_data': model_map,
@@ -143,6 +139,7 @@ class ModelHandler:
                     'pbeam_data': pbeam_data,
                     'header': header,
                 }
+                
         return maps
 
     def _generate_model_from_parameters(self, model_type, parameters, ra_map, dec_map, header,
@@ -150,7 +147,7 @@ class ModelHandler:
         """Generate model map from direct parameters."""
 
         xform = TransformInput(parameters['model'], model_type)
-        input_par = xform.generate()
+        input_par = xform.run()
 
         rs_sample = rs[1:] if model_type == 'gnfwPressure' else rs
 
