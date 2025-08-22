@@ -9,7 +9,6 @@ import jax_finufft  # noqa: F401
 
 from ..utils.utils import (
     ytszToJyPix,
-    JyBeamToJyPix,  # retained for potential external use, not applied in Jy/pix path
     comptonCorrect,
     computeFlatCompton,
     comptonRelativ,
@@ -28,9 +27,7 @@ class FourierManager:
         Observational uv datasets keyed by data / field / spw.
     """
 
-    # ------------------------------------------------------------------
-    # Spectral scaling helpers (non-tSZ)
-    # ------------------------------------------------------------------
+    # ----------------- Spectral scaling (non-tSZ) ------------------------
     @staticmethod
     def _scale_powerlaw(spec: Dict[str, Any], freq: float) -> float:
         ref = float(spec.get('nu0', freq) or freq)
@@ -76,6 +73,71 @@ class FourierManager:
             return self._scale_scaling(spec, freq)
         return float(spec.get('amp', 1.0))
 
+    # ----------------- Fourier operations ------------------------
+    @staticmethod
+    def scale_vis(vis: Sequence[complex], factor: float) -> np.ndarray:
+        """Scalar multiply visibility array."""
+        return np.asarray(vis) * factor
+
+    @staticmethod
+    def phase_shift(vis: Sequence[complex], u: Sequence[float], v: Sequence[float],
+                    dRA: float , dDec: float ) -> np.ndarray:
+        """Apply phase shift corresponding to RA/Dec offsets (radians).
+        """
+        vis = np.asarray(vis); u = np.asarray(u); v = np.asarray(v)
+        if vis.shape != u.shape:
+            raise ValueError("vis and u/v shapes mismatch")
+        phase = np.exp(-2j * np.pi * (u * dRA + v * dDec))
+        return vis * phase
+
+    def _convert_model_map_to_jypix(self, model_name, entry):
+        """Convert model image to Jy/pixel (no beam normalization).
+
+        tSZ: y * dI/dy (including relativistic correction).
+        non-tSZ: apply analytic spectral scale factor (assumed already Jy-like per pixel).
+        Returns (image_JyPerPixel, pixel_scale_deg).
+        """
+        header = entry['header']
+        model_plane = self._extract_plane(entry['model_data'])
+        model_plane = np.nan_to_num(model_plane, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Frequency & pixel scale --------------------------------------------------
+        # Frequency: rely solely on CRVAL3 (ignore potentially incorrect RESTFRQ)
+        freq = header.get('CRVAL3')
+        if freq is None:
+            raise ValueError("Frequency not found in header (CRVAL3)")
+        cd1 = header.get('CDELT1') or header.get('CD1_1')
+        cd2 = header.get('CDELT2') or header.get('CD2_2')
+        if cd1 is None or cd2 is None:
+            raise ValueError("Pixel scale missing (CDELT1/2 or CD*_*).")
+        ipix_deg, jpix_deg = abs(cd1), abs(cd2)
+
+        # Spectrum type (standardized structure) ----------------------------------
+        spec_type = self.models[model_name]['parameters']['spectrum']['type']
+        tsz_bool = isinstance(spec_type, str) and spec_type.lower() == 'tsz'
+
+        if not tsz_bool:
+            spec = self.models[model_name]['parameters']['spectrum']
+            scale = self._spectral_scale(spec, freq)
+            return model_plane * scale, ipix_deg
+
+        # tSZ conversion path ------------------------------------------------------
+        # Temperature extraction (optional) ---------------------------------------
+        Te = self.models['0459_1']['parameters']['model']['temperature']
+
+        osz = 4
+        # Compute relativistic series coefficients (flat band; single freq treated as degenerate interval)
+        # Legacy does band-averaged comptonFlat first if starting in Jy; here we construct y->Jy/pix factor directly.
+        series = np.array([
+            ytszToJyPix(freq, ipix_deg, jpix_deg) * comptonRelativ(freq, order)
+            for order in range(1 + osz)
+        ])
+        conv = comptonCorrect(series, Te=Te)  # full dI/dy including relativistic corrections
+        jy_pix = model_plane * conv
+        return jy_pix, ipix_deg
+
+
+    # ----------------- Gridding and Sampling ------------------------
     @staticmethod
     def map_to_uvgrid(image: np.ndarray, pixel_scale_deg: float) -> Tuple[np.ndarray, float]:
         # Flip vertical axis (legacy convention) then FFT to uv half-plane
@@ -96,7 +158,6 @@ class FourierManager:
         nxy = uv_rfft_shifted.shape[0]
         
         cos_PA = np.cos(PA); sin_PA = np.sin(PA)
-
         urot = u * cos_PA - v * sin_PA
         vrot = u * sin_PA + v * cos_PA
 
@@ -265,8 +326,6 @@ class FourierManager:
                 # optional alignment offsets (degrees)
                 if align:
                     field_phase = self.uvdata[data_name].get(field_key, {}).get('phase_center')
-                    # print()
-                    # print(central_phase, field_phase)
                     dRA = np.deg2rad(-central_phase[0] + field_phase[0])
                     dDec = np.deg2rad(-central_phase[1] + field_phase[1])
                     fd['dRA'] = dRA
@@ -283,88 +342,6 @@ class FourierManager:
                                                 pixel_scale_deg=pixel_scale_deg,
                                                 align=align, normalize=normalize)
         return image
-
-
-
-    @staticmethod
-    def residual_vis(data_vis: Sequence[complex], model_vis: Sequence[complex]) -> np.ndarray:
-        """Compute residual visibilities (data - model)."""
-        data_vis = np.asarray(data_vis); model_vis = np.asarray(model_vis)
-        if data_vis.shape != model_vis.shape:
-            raise ValueError("data_vis and model_vis shape mismatch")
-        return data_vis - model_vis
-
-    @staticmethod
-    def scale_vis(vis: Sequence[complex], factor: float) -> np.ndarray:
-        """Scalar multiply visibility array."""
-        return np.asarray(vis) * factor
-
-    @staticmethod
-    def phase_shift(vis: Sequence[complex], u: Sequence[float], v: Sequence[float],
-                    dRA: float , dDec: float ) -> np.ndarray:
-        """Apply phase shift corresponding to RA/Dec offsets (radians).
-        """
-        vis = np.asarray(vis); u = np.asarray(u); v = np.asarray(v)
-        if vis.shape != u.shape:
-            raise ValueError("vis and u/v shapes mismatch")
-        phase = np.exp(-2j * np.pi * (u * dRA + v * dDec))
-        return vis * phase
-
-    @staticmethod
-    def _extract_plane(arr):
-        """Return 2D plane from 2D/3D/4D (stokes/freq) array layouts."""
-        a = np.asarray(arr)
-        if a.ndim == 4:
-            return a[0, 0]
-        if a.ndim == 3:
-            return a[0]
-        return a
-
-    def _convert_model_map_to_jypix(self, model_name, entry):
-        """Convert model image to Jy/pixel (no beam normalization).
-
-        tSZ: y * dI/dy (including relativistic correction).
-        non-tSZ: apply analytic spectral scale factor (assumed already Jy-like per pixel).
-        Returns (image_JyPerPixel, pixel_scale_deg).
-        """
-        header = entry['header']
-        model_plane = self._extract_plane(entry['model_data'])
-        model_plane = np.nan_to_num(model_plane, nan=0.0, posinf=0.0, neginf=0.0)
-
-        # Frequency & pixel scale --------------------------------------------------
-        # Frequency: rely solely on CRVAL3 (ignore potentially incorrect RESTFRQ)
-        freq = header.get('CRVAL3')
-        if freq is None:
-            raise ValueError("Frequency not found in header (CRVAL3)")
-        cd1 = header.get('CDELT1') or header.get('CD1_1')
-        cd2 = header.get('CDELT2') or header.get('CD2_2')
-        if cd1 is None or cd2 is None:
-            raise ValueError("Pixel scale missing (CDELT1/2 or CD*_*).")
-        ipix_deg, jpix_deg = abs(cd1), abs(cd2)
-
-        # Spectrum type (standardized structure) ----------------------------------
-        spec_type = self.models[model_name]['parameters']['spectrum']['type']
-        tsz_bool = isinstance(spec_type, str) and spec_type.lower() == 'tsz'
-
-        if not tsz_bool:
-            spec = self.models[model_name]['parameters']['spectrum']
-            scale = self._spectral_scale(spec, freq)
-            return model_plane * scale, ipix_deg
-
-        # tSZ conversion path ------------------------------------------------------
-        # Temperature extraction (optional) ---------------------------------------
-        Te = self.models['0459_1']['parameters']['model']['temperature']
-
-        osz = 4
-        # Compute relativistic series coefficients (flat band; single freq treated as degenerate interval)
-        # Legacy does band-averaged comptonFlat first if starting in Jy; here we construct y->Jy/pix factor directly.
-        series = np.array([
-            ytszToJyPix(freq, ipix_deg, jpix_deg) * comptonRelativ(freq, order)
-            for order in range(1 + osz)
-        ])
-        conv = comptonCorrect(series, Te=Te)  # full dI/dy including relativistic corrections
-        jy_pix = model_plane * conv
-        return jy_pix, ipix_deg
 
     # ------------------------------------------------------------------
     # New sampling API against matched_models structure

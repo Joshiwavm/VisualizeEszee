@@ -181,10 +181,7 @@ def ytszCorrect(y, Te=0.0, limsize=np.inf):
 
 # ------------------------ Imaging / geometry helpers ---------------------
 def extract_plane(arr):
-    """Return a 2D plane from a 2D/3D/4D array layout.
-
-    Mirrors behavior previously used in Manager.__extract_plane.
-    """
+    """Return a 2D plane from a 2D/3D/4D array layout."""
     a = np.asarray(arr)
     if a.ndim == 4:
         return a[0, 0]

@@ -62,9 +62,7 @@ class Deconvolve:
 
         # Read pixel sizes from header
         header = best_entry.get('header', {})
-        cd1 = header.get('CDELT1') or header.get('CD1_1')
-        cd2 = header.get('CDELT2') or header.get('CD2_2')
-        ipix_deg = abs(float(cd1)); jpix_deg = abs(float(cd2))
+        _,_,ipix_deg,jpix_deg = get_map_beam_and_pix(header)
 
         # Primary beam lookup (stored in matched map)
         maps_entry = self.matched_models[model_name][best_dn]['maps'][best_field][best_spw]
