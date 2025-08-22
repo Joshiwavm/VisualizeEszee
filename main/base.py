@@ -1,14 +1,14 @@
 from ..loading import DataHandler
 from ..loading import ModelHandler
 from ..plot import PlotGatherer
-from ..fourier import FourierManager
-from ..utils.utils import JyBeamToJyPix, smooth
+from ..fourier import FourierManager, Deconvolve
+from ..utils.utils import JyBeamToJyPix, smooth, extract_plane as utils_extract_plane, get_map_beam_and_pix as utils_get_map_beam_and_pix
 import warnings
 import os
 import numpy as np
 from astropy.io import fits
 
-class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
+class Manager(DataHandler, ModelHandler, FourierManager, Deconvolve, PlotGatherer):
     """
     Main manager class for loading, processing, and plotting ALMA uv-data and models.
     Unified containers:
@@ -109,119 +109,6 @@ class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
         for m in model_list:
             for d in data_list:
                 self._match_single(m, d, calib, notes=notes, save_output=save_output)
-
-    def JvM_clean(self, model_name: str | None = None, data_name: str | None = None, *, notes=None, save_output=None):
-        """Perform a Jansky/Beam (JvM) style combination: add the model map (Jy/beam,
-        smoothed to the smallest data beam) to the residual dirty image produced
-        from sampled visibilities.
-
-        Returns
-        -------
-        jvm_image : np.ndarray
-            Combined residual + smoothed model image in units of Jy/beam.
-        """
-        if model_name is None or data_name is None:
-            raise ValueError("model_name and data_name must be provided for JvM_clean")
-        if model_name not in self.matched_models:
-            raise ValueError(f"Model '{model_name}' not found in matched_models")
-
-        # Normalize data_name to a list to support single or multiple datasets
-        if isinstance(data_name, (list, tuple)):
-            data_names = list(data_name)
-        else:
-            data_names = [data_name]
-
-        # Validate datasets and collect target beam (smallest across provided datasets)
-        target_bmaj = None
-        target_bmin = None
-        target_area = np.inf
-        for dn in data_names:
-            assoc_dn = self.matched_models[model_name][dn]
-            maps_dn = assoc_dn.get('maps', {})
-
-            # pick the first map for this dataset
-            fk = next(iter(maps_dn))
-            spw_dict = maps_dn[fk]
-            sk = next(iter(spw_dict))
-            entry_dn = spw_dict[sk]
-            header_dn = entry_dn.get('header', {})
-
-            bmaj_deg, bmin_deg, _, _ = self.get_map_beam_and_pix(header_dn)
-            area = float(bmaj_deg) * float(bmin_deg)
-            if area < target_area:
-                target_area = area
-                target_bmaj = bmaj_deg
-                target_bmin = bmin_deg
-                # record the entry that produced the smallest beam across datasets
-                best_entry = entry_dn
-                best_dn = dn
-                best_field = fk
-                best_spw = sk
-        
-        # Convert chosen model map to Jy/pixel (handles tSZ or other spectra)
-        model_jypix, pix_deg = self._convert_model_map_to_jypix(model_name, best_entry)
-
-        # Read pixel sizes (two axes) from header for accurate conversion
-        header = best_entry.get('header', {})
-        cd1 = header.get('CDELT1') or header.get('CD1_1')
-        cd2 = header.get('CDELT2') or header.get('CD2_2')
-        ipix_deg = abs(float(cd1)); jpix_deg = abs(float(cd2))
-
-        # Primary beam lookup: assume 'pbeam_data' is stored correctly in the matched map
-        maps_entry = self.matched_models[model_name][best_dn]['maps'][best_field][best_spw]
-        pb_arr = maps_entry['pbeam_data']
-        # extract a 2D plane (stored format matches other stored arrays)
-        pb = self.__extract_plane(pb_arr)
-
-        # Prevent division by zero
-        pb_safe = np.where(pb == 0.0, 1.0, pb)
-
-        # Divide out PB so smoothing acts on intrinsic sky signal (Jy/pix)
-        model_jypix_nopb = model_jypix / pb_safe
-
-        # Convert Jy/pixel -> Jy/beam using the chosen target beam (smallest data beam)
-        factor = JyBeamToJyPix(ipix_deg, jpix_deg, float(target_bmaj), float(target_bmin))
-        model_jybeam = model_jypix_nopb / factor
-
-        # beam stuff: derive sigma (pixels) from geometric mean FWHM
-        fwhm_target_deg = np.sqrt(float(target_bmaj) * float(target_bmin))
-        fwhm_pix = fwhm_target_deg / ipix_deg
-        sigma = fwhm_pix / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-
-        # Smooth in Jy/beam and re-apply PB to get final smoothed Jy/beam image
-        model_smoothed_beam = smooth(model_jybeam, sigma)
-        model_smoothed = model_smoothed_beam * pb
-
-        self.model_smoothed = model_smoothed
-        
-        # Build residual dirty image using sampled visibilities on the chosen grid
-        npix = model_smoothed.shape[0]
-        pixel_scale_deg = ipix_deg
-        resid = self.multivis_to_image( model_name, 
-                                        data_name, 
-                                        use='resid', 
-                                        fields = ['field0'], #whatever is the first key
-                                        npix=npix, 
-                                        pixel_scale_deg=pixel_scale_deg, 
-                                        calib=1.0, 
-                                        align=True)
-
-        # Resid and model are both in Jy/beam -> add
-        jvm_image = resid + model_smoothed
-
-        # Store and optionally save under the matched_models record for the chosen dataset
-        assoc = self.matched_models[model_name].setdefault(best_dn, {})
-        assoc.setdefault('JvM_clean', {})
-        assoc['deconvolved'] = jvm_image.astype(np.float32)
-
-        if save_output is not None:
-            os.makedirs(save_output, exist_ok=True)
-            h = header.copy(); h['BUNIT'] = 'Jy/beam'
-            fname = os.path.join(save_output, f"{model_name}_{best_dn}_{best_field}_{best_spw}_JvM_clean.fits")
-            print(f"Writing JvM-cleaned image to {fname}")
-            fits.writeto(fname, jvm_image.astype(np.float32), header=h, overwrite=True)
-
-        return jvm_image
 
     # ------------------------------------------------------------------
     # Output writer helper
@@ -333,45 +220,3 @@ class Manager(FourierManager, DataHandler, ModelHandler, PlotGatherer):
         else:
             recurse(target, '', True, 1)
         print('\n'.join(lines))
-
-    @staticmethod
-    def __extract_plane(arr):
-        """Return 2D plane from 2D/3D/4D (stokes/freq) array layouts."""
-        a = np.asarray(arr)
-        if a.ndim == 4:
-            return a[0, 0]
-        if a.ndim == 3:
-            return a[0]
-        return a
-
-    # Helper: centralize beam & pixel extraction/normalization
-    def get_map_beam_and_pix(self, header):
-        """Extract beam (BMAJ,BMIN) and pixel scales (CDELT/CD) from a FITS header.
-
-        Returns values in degrees: (bmaj_deg, bmin_deg, ipix_deg, jpix_deg).
-        If header values appear to be in arcseconds (numeric > 0.01), convert to degrees.
-        Raises ValueError if required keys missing.
-        """
-        if header is None:
-            raise ValueError("Header is required to extract beam and pixel size")
-        cd1 = header.get('CDELT1') or header.get('CD1_1')
-        cd2 = header.get('CDELT2') or header.get('CD2_2')
-        bmaj = header.get('BMAJ')
-        bmin = header.get('BMIN')
-        if cd1 is None or cd2 is None:
-            raise ValueError("Pixel scale missing (CDELT1/2 or CD*_*).")
-        if bmaj is None or bmin is None:
-            raise ValueError("Beam (BMAJ/BMIN) missing from header")
-
-        def to_deg(x):
-            xv = float(x)
-            # assume arcsec if value looks large; convert to degrees
-            if abs(xv) > 0.01:
-                return abs(xv) / 3600.0
-            return abs(xv)
-
-        ipix_deg = to_deg(cd1)
-        jpix_deg = to_deg(cd2)
-        bmaj_deg = to_deg(bmaj)
-        bmin_deg = to_deg(bmin)
-        return bmaj_deg, bmin_deg, ipix_deg, jpix_deg

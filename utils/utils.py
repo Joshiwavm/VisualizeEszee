@@ -268,3 +268,47 @@ def computeFlatCompton(freq_range, cdelt, order):
     val, _ = _scint.quad(lambda nu: yszCorrect(nu, cdelt, order), nu1, nu2, limit=200)
     # Average over bandwidth
     return val / (nu2 - nu1)
+
+
+def extract_plane(arr):
+  """Return 2D plane from 2D/3D/4D array layouts.
+
+  Mirrors the behavior previously implemented as Manager.__extract_plane.
+  """
+  a = np.asarray(arr)
+  if a.ndim == 4:
+    return a[0, 0]
+  if a.ndim == 3:
+    return a[0]
+  return a
+
+
+def get_map_beam_and_pix(header):
+  """Extract beam (BMAJ,BMIN) and pixel scales (CDELT/CD) from a FITS header.
+
+  Returns values in degrees: (bmaj_deg, bmin_deg, ipix_deg, jpix_deg).
+  If header values appear to be in arcseconds (numeric > 0.01), convert to degrees.
+  Raises ValueError if required keys missing.
+  """
+  if header is None:
+    raise ValueError("Header is required to extract beam and pixel size")
+  cd1 = header.get('CDELT1') or header.get('CD1_1')
+  cd2 = header.get('CDELT2') or header.get('CD2_2')
+  bmaj = header.get('BMAJ')
+  bmin = header.get('BMIN')
+  if cd1 is None or cd2 is None:
+    raise ValueError("Pixel scale missing (CDELT1/2 or CD*_*).")
+  if bmaj is None or bmin is None:
+    raise ValueError("Beam (BMAJ/BMIN) missing from header")
+
+  def to_deg(x):
+    xv = float(x)
+    if abs(xv) > 0.01:
+      return abs(xv) / 3600.0
+    return abs(xv)
+
+  ipix_deg = to_deg(cd1)
+  jpix_deg = to_deg(cd2)
+  bmaj_deg = to_deg(bmaj)
+  bmin_deg = to_deg(bmin)
+  return bmaj_deg, bmin_deg, ipix_deg, jpix_deg
