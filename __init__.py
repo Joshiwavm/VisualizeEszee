@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .utils import *
-from .loading import Manager
+from .main import Manager
 
 __all__ = ['Manager']
 
