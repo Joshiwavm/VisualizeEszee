@@ -1,5 +1,5 @@
-from .data_handler import DataHandler
-from .model_handler import ModelHandler
+from ..loading import DataHandler
+from ..loading import ModelHandler
 from ..plot import PlotGatherer
 from ..fourier import FourierManager
 from ..utils.utils import JyBeamToJyPix, smooth

@@ -1,5 +1,5 @@
 from .data_handler import DataHandler
 from .model_handler import ModelHandler
-from .base import Manager
+from VisualizeEszee.main import Manager
 
-__all__ = ['DataHandler', 'ModelHandler', 'PlotManager']
+__all__ = ['DataHandler', 'ModelHandler', 'Manager']
