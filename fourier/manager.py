@@ -3,15 +3,17 @@ from typing import Tuple, Sequence, Dict, Any, Optional
 
 import numpy as np
 from scipy.interpolate import RectBivariateSpline
+import copy
 
 import jax  # noqa: F401
 import jax_finufft  # noqa: F401
 
 from ..utils.utils import (
     ytszToJyPix,
-    comptonCorrect,
-    computeFlatCompton,
-    comptonRelativ,
+    ytszCorrect,
+    ytszRelativ,
+    extract_plane,
+    get_map_beam_and_pix,
 )
 
 class FourierManager:
@@ -74,10 +76,96 @@ class FourierManager:
         return float(spec.get('amp', 1.0))
 
     # ----------------- Fourier operations ------------------------
-    @staticmethod
-    def scale_vis(vis: Sequence[complex], factor: float) -> np.ndarray:
-        """Scalar multiply visibility array."""
-        return np.asarray(vis) * factor
+    def _find_central_field(self, band_name):
+        """
+        Find the field closest to the center of all fields.
+        
+        Parameters
+        ----------
+        band_name : str
+            Name of the band to analyze
+            
+        Returns
+        -------
+        central_field : str
+            Name of the central field
+        """
+        fields = list(self.uvdata[band_name].keys())
+        fields = [f for f in fields if f != 'metadata']
+        
+        if len(fields) == 1:
+            return fields[0]
+            
+        # Get phase centers for all fields
+        ras = []
+        decs = []
+        
+        for field in fields:
+            phase_center = self.uvdata[band_name][field]['phase_center']
+            ras.append(phase_center[0])  # RA
+            decs.append(phase_center[1])  # Dec
+            
+        ras = np.array(ras)
+        decs = np.array(decs)
+        
+        # Find center coordinates
+        center_ra = np.mean(ras)
+        center_dec = np.mean(decs)
+        
+        # Find field closest to center
+        distances = np.sqrt((ras - center_ra)**2 + (decs - center_dec)**2)
+        central_field_idx = np.argmin(distances)
+        
+        return fields[central_field_idx]
+
+    def apply_phase_shift(self, dRA, dDec, field_data):
+        """
+        Apply a phase shift to the visibilities based on an offset in RA and Dec.
+
+        Parameters
+        ----------
+        dRA : float
+            Offset in Right Ascension (arcsec).
+        dDec : float
+            Offset in Declination (arcsec).
+        field_data : dict
+            Field data containing UV coordinates and visibilities
+
+        Returns
+        -------
+        shifted_data : dict
+            Copy of field data with phase-shifted visibilities
+        """
+        shifted_data = copy.deepcopy(field_data)
+
+        # Convert the offsets from arcsec to radians
+        dRA_rad = np.deg2rad(dRA / 3600.)
+        dDec_rad = np.deg2rad(dDec / 3600.)
+
+        # Phase shift each SPW
+        for spw_name, spw_data in shifted_data.items():
+            if spw_name == 'phase_center':
+                continue
+                
+            # Form complex visibilities from original real and imaginary parts
+            vis = spw_data.uvreal + 1j * spw_data.uvimag
+            
+            # Compute the phase factor (using (u, v) in wavelengths)
+            phase_factor = np.exp(-2j * np.pi * (spw_data.uwave * dRA_rad +
+                                                    spw_data.vwave * dDec_rad))
+            
+            # Apply the phase shift
+            new_vis = vis * phase_factor
+
+            # I need to a primairy beam correction!!!!!!
+            
+            # Store the phase-shifted visibilities
+            shifted_data[spw_name] = spw_data._replace(
+                uvreal=new_vis.real,
+                uvimag=new_vis.imag
+            )
+
+        return shifted_data
 
     @staticmethod
     def phase_shift(vis: Sequence[complex], u: Sequence[float], v: Sequence[float],
@@ -90,6 +178,11 @@ class FourierManager:
         phase = np.exp(-2j * np.pi * (u * dRA + v * dDec))
         return vis * phase
 
+    @staticmethod
+    def scale_vis(vis: Sequence[complex], factor: float) -> np.ndarray:
+        """Scalar multiply visibility array."""
+        return np.asarray(vis) * factor
+
     def _convert_model_map_to_jypix(self, model_name, entry):
         """Convert model image to Jy/pixel (no beam normalization).
 
@@ -98,19 +191,13 @@ class FourierManager:
         Returns (image_JyPerPixel, pixel_scale_deg).
         """
         header = entry['header']
-        model_plane = self._extract_plane(entry['model_data'])
+        model_plane = extract_plane(entry['model_data'])
         model_plane = np.nan_to_num(model_plane, nan=0.0, posinf=0.0, neginf=0.0)
 
         # Frequency & pixel scale --------------------------------------------------
         # Frequency: rely solely on CRVAL3 (ignore potentially incorrect RESTFRQ)
         freq = header.get('CRVAL3')
-        if freq is None:
-            raise ValueError("Frequency not found in header (CRVAL3)")
-        cd1 = header.get('CDELT1') or header.get('CD1_1')
-        cd2 = header.get('CDELT2') or header.get('CD2_2')
-        if cd1 is None or cd2 is None:
-            raise ValueError("Pixel scale missing (CDELT1/2 or CD*_*).")
-        ipix_deg, jpix_deg = abs(cd1), abs(cd2)
+        _, _, ipix_deg, jpix_deg = get_map_beam_and_pix(header)
 
         # Spectrum type (standardized structure) ----------------------------------
         spec_type = self.models[model_name]['parameters']['spectrum']['type']
@@ -129,10 +216,10 @@ class FourierManager:
         # Compute relativistic series coefficients (flat band; single freq treated as degenerate interval)
         # Legacy does band-averaged comptonFlat first if starting in Jy; here we construct y->Jy/pix factor directly.
         series = np.array([
-            ytszToJyPix(freq, ipix_deg, jpix_deg) * comptonRelativ(freq, order)
+            ytszToJyPix(freq, ipix_deg, jpix_deg) * ytszRelativ(freq, order)
             for order in range(1 + osz)
         ])
-        conv = comptonCorrect(series, Te=Te)  # full dI/dy including relativistic corrections
+        conv = ytszCorrect(series, Te=Te)  # full dI/dy including relativistic corrections
         jy_pix = model_plane * conv
         return jy_pix, ipix_deg
 
@@ -285,7 +372,7 @@ class FourierManager:
         pix_N_map = []
 
         # Determine central phase center for optional alignment
-        central_field = self.find_central_field(data_name)
+        central_field = self._find_central_field(data_name)
         central_phase = self.uvdata[data_name][central_field]['phase_center']
 
         # Iterate sampled entries
@@ -302,7 +389,7 @@ class FourierManager:
                         self.matched_models[model_name][data_name]['maps'][field_key][spw_key]['header'].get('CD1_1')
                 pixel_scales.append(abs(cd1))
 
-                plane = self._extract_plane(self.matched_models[model_name][data_name]['maps'][field_key][spw_key].get('model_data'))
+                plane = extract_plane(self.matched_models[model_name][data_name]['maps'][field_key][spw_key].get('model_data'))
                 pix_N_map.append((int(np.asarray(plane).shape[0]) if plane is not None else np.nan, cd1))
 
                 # Choose which visibility to use

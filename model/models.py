@@ -1,8 +1,8 @@
-from astropy.cosmology import Planck15 as cosmo
 import numpy as np
 from astropy import units as u
 from scipy.integrate import quad
-import numpy as np
+
+from ..utils.utils import cosmo
 
 def elos(e): return 1.00-(1.00-e)/np.sqrt(0.50*(1.00+(1.00-e)**2))
 

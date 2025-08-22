@@ -1,11 +1,11 @@
 import numpy as np
 from astropy.io import fits
-from astropy.cosmology import Planck18 as cosmo
 from astropy import units as u
 from astropy import constants as const
 from ..model.models import *
 from ..model.unitwrapper import TransformInput  # renamed from transform
 from ..utils import calculate_r500, ysznorm
+from ..utils.utils import cosmo
 
 class ModelHandler:
     """Handles model creation and sky map generation."""

@@ -4,7 +4,7 @@ np.seterr(divide='ignore', invalid='ignore')
 from astropy import constants as const
 from astropy import units as u
 from astropy.convolution import convolve_fft, Gaussian2DKernel
-from astropy.cosmology import Planck15 as cosmo
+from astropy.cosmology import Planck18 as cosmo
 
 import scipy.special
 import scipy.integrate as _scint
@@ -313,27 +313,3 @@ def get_samples(filename, major=[None], flux=[None]):
         for r in range(samples.shape[1])
     ])
     return edges
-
-
-# ------------------------ Legacy aliases / compatibility -----------------
-comptonToJyPix = ytszToJyPix
-comptonRelativ = ytszRelativ
-
-
-def comptonCorrect(y, Te=0.0, limsize=np.inf):
-    return ytszCorrect(y, Te=Te, limsize=limsize)
-
-
-def yszCorrect(freq, cdelt, order):
-    return comptonToJyPix(freq, cdelt[0], cdelt[1]) * comptonRelativ(freq, order)
-
-
-def computeFlatCompton(freq_range, cdelt, order):
-    """Integrate yszCorrect over a frequency interval [nu1, nu2]."""
-    nu1, nu2 = freq_range
-    if nu1 == nu2:
-        return yszCorrect(nu1, cdelt, order)
-    val, _ = _scint.quad(lambda nu: yszCorrect(nu, cdelt, order), nu1, nu2, limit=200)
-    # Average over bandwidth
-    return val / (nu2 - nu1)
-

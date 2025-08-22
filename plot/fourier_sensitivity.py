@@ -3,15 +3,16 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import copy
+import os
 
-from ..utils.utils import *
+from ..utils.utils import arcsec_to_uvdist, uvdist_to_arcsec
 from ..utils.style import setup_plot_style
 
 class PlotFourierSensitivity:
     """
     A class for visualizing Fourier mode sensitivity of ALMA AND ACT DATA
     """
-    def getWeightDistribution(self, name, bins=np.logspace(np.log10(0.1), np.log10(150), 31)):
+    def __getWeightDistribution(self, name, bins=np.logspace(np.log10(0.1), np.log10(150), 31)):
         """
         Returns binned sensitivity for a given uvdata set name.
         """
@@ -45,7 +46,7 @@ class PlotFourierSensitivity:
         return np.array(bin_centers), np.array(std_binned)
 
 
-    def getACTSensitivity(self):
+    def _getACTSensitivity(self):
         """
         Compute inverse-variance weighted sensitivities for ACT data.
         
@@ -87,7 +88,8 @@ class PlotFourierSensitivity:
         
         return act_sensitivities
 
-    def plot_weight_distributions(self, use_style=True, **kwargs):
+    def plot_weight_distributions(self, save_plots=False, output_dir='../plots/fourier_sensitivity/',
+                                  use_style=True, return_fig: bool = False, **plot_kwargs):
         """
         Plots binned and point source sensitivity for all loaded uvdata sets.
         
@@ -109,9 +111,9 @@ class PlotFourierSensitivity:
             style_applied = setup_plot_style()
         
         # Extract kwargs for different plot types
-        plot_kwargs = kwargs.copy()
-        axhline_kwargs = kwargs.copy()
-        
+        plot_kwargs = plot_kwargs.copy()
+        axhline_kwargs = plot_kwargs.copy()
+            
         # Handle specific kwargs for axhline (dashed lines)
         if 'linestyle' in axhline_kwargs:
             axhline_kwargs['ls'] = axhline_kwargs.pop('linestyle')
@@ -121,14 +123,14 @@ class PlotFourierSensitivity:
         fig, ax = plt.subplots(constrained_layout=True)
         
         for i, name in enumerate(self.uvdata):
-            bin_centers, std_binned = self.getWeightDistribution(name)
+            bin_centers, std_binned = self.__getWeightDistribution(name)
             ax.plot(bin_centers, std_binned * 1e6, c=f'C{i}', label=name, **plot_kwargs)
             ps_sens = (1/np.nansum(1/std_binned**2))**0.5*1e6
             ax.axhline(ps_sens, c=f'C{i}', **axhline_kwargs)
 
         if hasattr(self, 'actdata') and self.actdata:
             # Get ACT sensitivities using the dedicated method
-            act_sensitivities = self.getACTSensitivity()
+            act_sensitivities = self._getACTSensitivity()
 
             # Plot ACT lines if values are available
             color_offset = len(self.uvdata)
@@ -152,7 +154,21 @@ class PlotFourierSensitivity:
         ax.tick_params(axis='x', which='both', top=False)
         
         ax.axis(xmin=1e0, xmax=1e2)
+
         secax = ax.secondary_xaxis('top', functions=(arcsec_to_uvdist, uvdist_to_arcsec))
-        secax.set_xlabel('Spatial scale ["]', fontsize=12)
-        plt.legend(frameon=True, loc=1)        
+        secax.set_xlabel('Spatial scale ["]')
+        plt.legend(frameon=True, loc=1)
+
+        if save_plots:
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            filename = 'fourier_weight_distributions.png'
+            if hasattr(self, 'target') and self.target:
+                safe_target = str(self.target).replace(' ', '_')
+                filename = f'fourier_weight_distributions_{safe_target}.png'
+            plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
+
+        if return_fig:
+            return fig, ax
+
         plt.show()

@@ -5,8 +5,10 @@ Updated to use brightness_models.yml with 'distributions' key and log10M as prim
 from pathlib import Path
 from typing import Dict, Any, Optional
 import yaml
-from astropy.cosmology import Planck18 as cosmo
 import numpy as np
+
+from ..utils.utils import cosmo
+
 
 # ------------------------------------------------------------------
 # Loading configuration

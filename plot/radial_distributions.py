@@ -1,12 +1,153 @@
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
-import copy
 import os
 
 from ..utils.style import setup_plot_style
+from ..utils.utils import arcsec_to_uvdist, uvdist_to_arcsec
 
 class PlotRadialDistributions:
+
+    # ----------------- Compute raidal uvprofiles ------------------------
+
+    def _get_binned_uvdatapoints(self, band_name, nbins=20, custom_phase_center=None):
+        """
+        Bin UV data points radially after phase shifting all fields to central field.
+        
+        Parameters
+        ----------
+        band_name : str
+            Name of the band to analyze
+        nbins : int, optional
+            Number of bins for radial averaging (default: 20)
+        custom_phase_center : tuple, optional
+            Custom phase center (RA, Dec) in degrees to shift all fields to.
+            If None, uses automatically determined central field.
+            
+        Returns
+        -------
+        tuple
+            Binned real, real errors, imaginary, imaginary errors, bin edges, bin centers
+        """
+        # Determine phase center to use
+        if custom_phase_center is not None:
+            central_phase_center = custom_phase_center
+        else:
+            # Find central field
+            central_field = self._find_central_field(band_name)
+            print(f"Using central field: {central_field}")
+            central_phase_center = self.uvdata[band_name][central_field]['phase_center']
+        
+        # Collect phase-shifted data only for the central field
+        all_uvreals = []
+        all_uvimags = []
+        all_uvdist = []
+        all_uvwghts = []
+
+        central_field = self._find_central_field(band_name)
+        field_data = self.uvdata[band_name][central_field]
+
+        # Calculate phase shift needed to move this field to the chosen central phase center
+        field_phase_center = field_data['phase_center']
+        dRA = (central_phase_center[0] - field_phase_center[0]) * 3600  # to arcsec
+        dDec = (central_phase_center[1] - field_phase_center[1]) * 3600  # to arcsec
+
+        # Apply phase shift (will be identity if central_field already equals central_phase_center)
+        shifted_data = self.apply_phase_shift(dRA, dDec, field_data)
+
+
+        # Collect data from all SPWs in this (central) field
+        for spw_name, spw_data in shifted_data.items():
+            if spw_name == 'phase_center':
+                continue
+
+            # Calculate UV distance
+            uvdist = np.sqrt(spw_data.uwave**2 + spw_data.vwave**2)
+
+            all_uvreals.append(spw_data.uvreal)
+            all_uvimags.append(spw_data.uvimag)
+            all_uvdist.append(uvdist)
+            all_uvwghts.append(spw_data.suvwght)
+        
+        # Concatenate all data
+        UVreals = np.concatenate(all_uvreals)
+        UVimags = np.concatenate(all_uvimags)
+        UVdist = np.concatenate(all_uvdist)
+        UVwghts = np.concatenate(all_uvwghts)
+        
+        # Perform binning
+        bins = np.linspace(0, len(UVdist[UVdist > 0]) - 1, nbins, dtype=int)
+        UVdist_sorted = np.sort(UVdist[UVdist > 0])
+            
+        UVrealbinned = np.empty(nbins - 1)
+        UVrealerrors = np.empty(nbins - 1)
+        UVimagbinned = np.empty(nbins - 1)
+        UVimagerrors = np.empty(nbins - 1)
+        bin_cs = np.empty(nbins - 1)
+            
+        for i in range(len(bins) - 1):
+            mask = (UVdist > UVdist_sorted[bins[i]]) & (UVdist <= UVdist_sorted[bins[i + 1]])        
+            
+            UVrealbinned[i], UVrealerrors[i] = np.average(UVreals[mask], weights=UVwghts[mask], returned=True) 
+            UVimagbinned[i], UVimagerrors[i] = np.average(UVimags[mask], weights=UVwghts[mask], returned=True)
+
+            UVrealerrors[i] = UVrealerrors[i]**(-0.5) 
+            UVimagerrors[i] = UVimagerrors[i]**(-0.5) 
+                
+            bin_cs[i] = np.median(UVdist[mask])
+
+        return UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, UVdist_sorted[bins], bin_cs
+
+    def _get_or_compute_model_slice(self, model_name: str, data_name: str,
+                                     field_key: str, spw_key: str,
+                                     npts: int, r_min_k: float, r_max_k: float,
+                                     axis: str = 'v', custom_phase_center = None):
+        """Return (k_vals, real, imag) for a model's visibility slice.
+
+        This implementation phase-shifts the entire uv-grid and then takes a
+        slice, avoiding the interpolation of `sample_uv`.
+        """
+        # Determine phase center shift (in radians)
+        field_phase_center = self.uvdata[data_name][field_key]['phase_center']
+        if custom_phase_center is not None:
+            central_phase_center_models = custom_phase_center
+        else:
+            central_phase_center_models = self.uvdata[data_name][field_key]['phase_center']
+
+        # dRA/dDec in radians (difference central - field)
+
+        print(model_name, data_name, central_phase_center_models, field_phase_center)
+
+        dRA_rad = np.deg2rad(central_phase_center_models[0] - field_phase_center[0])
+        dDec_rad = np.deg2rad(central_phase_center_models[1] - field_phase_center[1])
+
+        # Access model map and grid parameter
+        uv_entry = self.fft_map(model_name, data_name, field_key, spw_key)
+        uv_grid = uv_entry['uv']
+        du = uv_entry['du']
+
+        # Build target k-values (k-lambda) and corresponding u/v sample coords (lambda)
+        k_vals_final = np.logspace(np.log10(r_min_k), np.log10(r_max_k), npts)
+        if axis.lower() == 'u':
+            u_samples = k_vals_final * 1e3  # convert k-lambda -> lambda
+            v_samples = np.zeros_like(u_samples)
+        elif axis.lower() == 'v':
+            v_samples = k_vals_final * 1e3
+            u_samples = np.zeros_like(v_samples)
+        else:
+            raise ValueError("axis must be 'u' or 'v'")
+
+        model_vis = self.sample_uv(uv_grid, u_samples, v_samples, du, dRA=0.0, dDec=0.0)
+
+        phase_factor = np.exp(-2j * np.pi * (u_samples * dRA_rad + v_samples * dDec_rad))
+        model_vis = model_vis * phase_factor
+
+        real_line = np.asarray(model_vis).real
+        imag_line = np.asarray(model_vis).imag
+
+        return k_vals_final, real_line, imag_line
+
+    # ----------------- Plotting scripts ------------------------
 
     def _plot_single_radial_distribution(self, UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, 
                                        bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
@@ -57,8 +198,8 @@ class PlotRadialDistributions:
         
         # Add secondary axis for spatial scale (only once)
         if color_idx == 0:
-            from ..utils.utils import uvdist_to_arcsec, arcsec_to_uvdist
-            secax = ax.secondary_xaxis('top', functions=(uvdist_to_arcsec, arcsec_to_uvdist))
+            # add_secondary_uv_axis(ax)
+            secax = ax.secondary_xaxis('top', functions=(arcsec_to_uvdist, uvdist_to_arcsec))
             secax.set_xlabel('Spatial scale ["]')
             ax.tick_params(axis='x', which='both', top=False)
         
@@ -106,184 +247,8 @@ class PlotRadialDistributions:
                    fontsize=10, verticalalignment='top', 
                    bbox=dict(boxstyle='round,pad=0.3', edgecolor='black', facecolor='white'))
         return errorbar_kwargs.get('handle', ax)  # return axis for handle capture (we'll just return ax)
-    
-    def find_central_field(self, band_name):
-        """
-        Find the field closest to the center of all fields.
-        
-        Parameters
-        ----------
-        band_name : str
-            Name of the band to analyze
-            
-        Returns
-        -------
-        central_field : str
-            Name of the central field
-        """
-        fields = list(self.uvdata[band_name].keys())
-        fields = [f for f in fields if f != 'metadata']
-        
-        if len(fields) == 1:
-            return fields[0]
-            
-        # Get phase centers for all fields
-        ras = []
-        decs = []
-        
-        for field in fields:
-            phase_center = self.uvdata[band_name][field]['phase_center']
-            ras.append(phase_center[0])  # RA
-            decs.append(phase_center[1])  # Dec
-            
-        ras = np.array(ras)
-        decs = np.array(decs)
-        
-        # Find center coordinates
-        center_ra = np.mean(ras)
-        center_dec = np.mean(decs)
-        
-        # Find field closest to center
-        distances = np.sqrt((ras - center_ra)**2 + (decs - center_dec)**2)
-        central_field_idx = np.argmin(distances)
-        
-        return fields[central_field_idx]
 
-    def apply_phase_shift(self, dRA, dDec, field_data):
-        """
-        Apply a phase shift to the visibilities based on an offset in RA and Dec.
-
-        Parameters
-        ----------
-        dRA : float
-            Offset in Right Ascension (arcsec).
-        dDec : float
-            Offset in Declination (arcsec).
-        field_data : dict
-            Field data containing UV coordinates and visibilities
-
-        Returns
-        -------
-        shifted_data : dict
-            Copy of field data with phase-shifted visibilities
-        """
-        shifted_data = copy.deepcopy(field_data)
-
-        # Convert the offsets from arcsec to radians
-        dRA_rad = np.deg2rad(dRA / 3600.)
-        dDec_rad = np.deg2rad(dDec / 3600.)
-
-        # Phase shift each SPW
-        for spw_name, spw_data in shifted_data.items():
-            if spw_name == 'phase_center':
-                continue
-                
-            # Form complex visibilities from original real and imaginary parts
-            vis = spw_data.uvreal + 1j * spw_data.uvimag
-            
-            # Compute the phase factor (using (u, v) in wavelengths)
-            phase_factor = np.exp(-2j * np.pi * (spw_data.uwave * dRA_rad +
-                                                    spw_data.vwave * dDec_rad))
-            
-            # Apply the phase shift
-            new_vis = vis * phase_factor
-
-            # I need to a primairy beam correction!!!!!!
-            
-            # Store the phase-shifted visibilities
-            shifted_data[spw_name] = spw_data._replace(
-                uvreal=new_vis.real,
-                uvimag=new_vis.imag
-            )
-
-        return shifted_data
-
-    def get_binned_uvdatapoints(self, band_name, nbins=20, custom_phase_center=None):
-        """
-        Bin UV data points radially after phase shifting all fields to central field.
-        
-        Parameters
-        ----------
-        band_name : str
-            Name of the band to analyze
-        nbins : int, optional
-            Number of bins for radial averaging (default: 20)
-        custom_phase_center : tuple, optional
-            Custom phase center (RA, Dec) in degrees to shift all fields to.
-            If None, uses automatically determined central field.
-            
-        Returns
-        -------
-        tuple
-            Binned real, real errors, imaginary, imaginary errors, bin edges, bin centers
-        """
-        # Determine phase center to use
-        if custom_phase_center is not None:
-            central_phase_center = custom_phase_center
-        else:
-            # Find central field
-            central_field = self.find_central_field(band_name)
-            print(f"Using central field: {central_field}")
-            central_phase_center = self.uvdata[band_name][central_field]['phase_center']
-        
-        # Collect phase-shifted data only for the central field
-        all_uvreals = []
-        all_uvimags = []
-        all_uvdist = []
-        all_uvwghts = []
-
-        central_field = self.find_central_field(band_name)
-        field_data = self.uvdata[band_name][central_field]
-
-        # Calculate phase shift needed to move this field to the chosen central phase center
-        field_phase_center = field_data['phase_center']
-        dRA = (central_phase_center[0] - field_phase_center[0]) * 3600  # to arcsec
-        dDec = (central_phase_center[1] - field_phase_center[1]) * 3600  # to arcsec
-
-        # Apply phase shift (will be identity if central_field already equals central_phase_center)
-        shifted_data = self.apply_phase_shift(dRA, dDec, field_data)
-
-        # Collect data from all SPWs in this (central) field
-        for spw_name, spw_data in shifted_data.items():
-            if spw_name == 'phase_center':
-                continue
-
-            # Calculate UV distance
-            uvdist = np.sqrt(spw_data.uwave**2 + spw_data.vwave**2)
-
-            all_uvreals.append(spw_data.uvreal)
-            all_uvimags.append(spw_data.uvimag)
-            all_uvdist.append(uvdist)
-            all_uvwghts.append(spw_data.suvwght)
-        
-        # Concatenate all data
-        UVreals = np.concatenate(all_uvreals)
-        UVimags = np.concatenate(all_uvimags)
-        UVdist = np.concatenate(all_uvdist)
-        UVwghts = np.concatenate(all_uvwghts)
-        
-        # Perform binning
-        bins = np.linspace(0, len(UVdist[UVdist > 0]) - 1, nbins, dtype=int)
-        UVdist_sorted = np.sort(UVdist[UVdist > 0])
-            
-        UVrealbinned = np.empty(nbins - 1)
-        UVrealerrors = np.empty(nbins - 1)
-        UVimagbinned = np.empty(nbins - 1)
-        UVimagerrors = np.empty(nbins - 1)
-        bin_cs = np.empty(nbins - 1)
-            
-        for i in range(len(bins) - 1):
-            mask = (UVdist > UVdist_sorted[bins[i]]) & (UVdist <= UVdist_sorted[bins[i + 1]])        
-            
-            UVrealbinned[i], UVrealerrors[i] = np.average(UVreals[mask], weights=UVwghts[mask], returned=True) 
-            UVimagbinned[i], UVimagerrors[i] = np.average(UVimags[mask], weights=UVwghts[mask], returned=True)
-
-            UVrealerrors[i] = UVrealerrors[i]**(-0.5) 
-            UVimagerrors[i] = UVimagerrors[i]**(-0.5) 
-                
-            bin_cs[i] = np.median(UVdist[mask])
-
-        return UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, UVdist_sorted[bins], bin_cs
+    # ----------------- Main plotting script ------------------------
 
     def plot_radial_distributions(self, nbins=20, save_plots=True, output_dir='../plots/uvplots/', 
                                 custom_phase_center=None, use_style=True, data_name: str | None = None,
@@ -291,6 +256,7 @@ class PlotRadialDistributions:
                                 n_model_pts: int = 500, r_min_k: float = 1, r_max_k: float = 20.0,
                                 axis: str = 'v',
                                 separate_legends: bool = True,
+                                return_fig: bool = False,
                                 **kwargs):
         """
         Plot radial UV distributions.
@@ -331,7 +297,7 @@ class PlotRadialDistributions:
         data_handles = []
         for i, name in enumerate(dataset_names):
             current_nbins = nbins_list[i]
-            UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_centers = self.get_binned_uvdatapoints(
+            UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_centers = self._get_binned_uvdatapoints(
                 name, current_nbins, custom_phase_center
             )
             h_real = self._plot_single_radial_distribution(
@@ -350,7 +316,7 @@ class PlotRadialDistributions:
             
             # Loop over datasets for model overlays (parallel to data plotting)
             for i, name in enumerate(dataset_names):
-                central_field = self.find_central_field(name)
+                central_field = self._find_central_field(name)
                 dataset_color = f"C{i % 10}"
 
                 # Collect and plot candidate models
@@ -377,17 +343,11 @@ class PlotRadialDistributions:
                         custom_phase_center=custom_phase_center
                     )
 
-                    self.k_vals = k_vals
-                    self.real_line = real_line
-                    self.imag_line = imag_line
-
                     axes[0].plot(k_vals, real_line * 1e3, lw=2.0, ls=model_linestyles_map[mname], c=dataset_color, label='__nolegend__')
                     axes[1].plot(k_vals, imag_line * 1e3, lw=2.0, ls=model_linestyles_map[mname], c=dataset_color, label='__nolegend__')
         else:
             if model_name is not None:
                 print("Model plotting requested but required attributes (matched_models, fft_map, sample_uv) missing.")
-
-        plt.tight_layout()
 
         # Legends ------------------------------------------------------
         if separate_legends:
@@ -409,62 +369,14 @@ class PlotRadialDistributions:
                 axes[0].add_artist(leg_data)
         else:
             axes[0].legend(frameon=False, loc='lower right', fontsize=9)
-        
+
+        plt.tight_layout()
+
         if save_plots:
             filename = 'UVradial_data_combined.png' if data_name is None else f'UVradial_{data_name}.png'
             plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
             print(f"Saved plot: {output_dir}/{filename}")
         
+        if return_fig:
+            return fig, axes
         plt.show()
-
-    # ------------------------------------------------------------------
-    # Model slice helper
-    # ------------------------------------------------------------------
-    def _get_or_compute_model_slice(self, model_name: str, data_name: str,
-                                     field_key: str, spw_key: str,
-                                     npts: int, r_min_k: float, r_max_k: float,
-                                     axis: str = 'v', custom_phase_center = None):
-        """Return (k_vals, real, imag) for a model's visibility slice.
-
-        This implementation phase-shifts the entire uv-grid and then takes a
-        slice, avoiding the interpolation of `sample_uv`.
-        """
-        # Determine phase center shift (in radians)
-        field_phase_center = self.uvdata[data_name][field_key]['phase_center']
-        if custom_phase_center is not None:
-            central_phase_center_models = custom_phase_center
-        else:
-            central_phase_center_models = self.uvdata[data_name][field_key]['phase_center']
-
-        # dRA/dDec in radians (difference central - field)
-
-        print(model_name, data_name, central_phase_center_models, field_phase_center)
-
-        dRA_rad = np.deg2rad(central_phase_center_models[0] - field_phase_center[0])
-        dDec_rad = np.deg2rad(central_phase_center_models[1] - field_phase_center[1])
-
-        # Access model map and grid parameter
-        uv_entry = self.fft_map(model_name, data_name, field_key, spw_key)
-        uv_grid = uv_entry['uv']
-        du = uv_entry['du']
-
-        # Build target k-values (k-lambda) and corresponding u/v sample coords (lambda)
-        k_vals_final = np.logspace(np.log10(r_min_k), np.log10(r_max_k), npts)
-        if axis.lower() == 'u':
-            u_samples = k_vals_final * 1e3  # convert k-lambda -> lambda
-            v_samples = np.zeros_like(u_samples)
-        elif axis.lower() == 'v':
-            v_samples = k_vals_final * 1e3
-            u_samples = np.zeros_like(v_samples)
-        else:
-            raise ValueError("axis must be 'u' or 'v'")
-
-        model_vis = self.sample_uv(uv_grid, u_samples, v_samples, du, dRA=0.0, dDec=0.0)
-
-        phase_factor = np.exp(-2j * np.pi * (u_samples * dRA_rad + v_samples * dDec_rad))
-        model_vis = model_vis * phase_factor
-
-        real_line = np.asarray(model_vis).real
-        imag_line = np.asarray(model_vis).imag
-
-        return k_vals_final, real_line, imag_line

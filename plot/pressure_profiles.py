@@ -1,14 +1,13 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import os
-from astropy.cosmology import Planck18 as cosmo
-from astropy import units as u
 from ..model.parameter_utils import get_models
 from ..model.models import *
 from ..utils.style import setup_plot_style
-from ..utils import calculate_r500, ysznorm
-from ..model.unitwrapper import TransformInput  # renamed from transform
+from ..utils import calculate_r500, ysznorm, cosmo
+from ..model.unitwrapper import TransformInput  
 
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+from astropy import units as u
 
 class PlotPressureProfiles:
     """
@@ -21,7 +20,7 @@ class PlotPressureProfiles:
         
     def plot_pressure_profile(self, model_names=None, r_range=(1, 2000), n_points=200, 
                               save_plots=False, output_dir='../plots/pressure_profiles/',
-                              use_style=True, **plot_kwargs):
+                              use_style=True, return_fig: bool = False, **plot_kwargs):
         # Setup plot style if requested
         if use_style:
             setup_plot_style()
@@ -34,6 +33,7 @@ class PlotPressureProfiles:
         
         if model_names is None:
             model_names = list(self.models.keys())
+        
         else:
             if isinstance(model_names, str):
                 model_names = [model_names]
@@ -113,11 +113,8 @@ class PlotPressureProfiles:
             line = ax.loglog(r_kpc, pressure_phys, label=label, **plot_kwargs)
 
             if model_type == 'A10Pressure' and model_params.get('mass') is not None and model_params.get('redshift') is not None:
-                try:
-                    r500_kpc = calculate_r500(model_params['mass'], model_params['redshift'])
-                    ax.axvline(r500_kpc, color=line[0].get_color(), linestyle='--', alpha=0.5)
-                except Exception:
-                    pass
+                r500_kpc = calculate_r500(model_params['mass'], model_params['redshift'])
+                ax.axvline(r500_kpc, color=line[0].get_color(), linestyle='--', alpha=0.5)
         
         ax.set_xlabel('Radius (kpc)', fontsize=10)
         ax.set_ylabel(r'Pressure (keV cm⁻³ $h_{70}$)' , fontsize=10)
@@ -128,5 +125,8 @@ class PlotPressureProfiles:
         if save_plots:
             filename = 'pressure_profile_comparison.png' if len(model_names) > 1 else f'pressure_profile_{model_names[0]}.png'
             plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
-        
+
+        if return_fig:
+            return fig, ax
+
         plt.show()
