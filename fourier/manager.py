@@ -154,12 +154,12 @@ class FourierManager:
         accum_u, accum_v, accum_vis, accum_w = [], [], [], []
         for fd in fields:
 
-            print(fd['name'])
+            # print(fd['name'])
             u = np.asarray(fd['u']); v = np.asarray(fd['v'])
             w = np.asarray(fd['weights']); vis = np.asarray(fd['vis']) 
 
             if align:
-                dRA = fd.get('dRA', 0.0); dDec = fd.get('dDec', 0.0)
+                dRA = fd.get('dRA'); dDec = fd.get('dDec')
                 vis = self.phase_shift(vis, u, v, dRA=dRA, dDec=dDec)
             
             accum_u.append(u); accum_v.append(v); accum_vis.append(vis); accum_w.append(w)
@@ -263,10 +263,12 @@ class FourierManager:
                 }
 
                 # optional alignment offsets (degrees)
-                if align and (central_phase is not None):
+                if align:
                     field_phase = self.uvdata[data_name].get(field_key, {}).get('phase_center')
-                    dRA = np.deg2rad(central_phase[0] - field_phase[0])
-                    dDec = np.deg2rad(central_phase[1] - field_phase[1])
+                    # print()
+                    # print(central_phase, field_phase)
+                    dRA = np.deg2rad(-central_phase[0] + field_phase[0])
+                    dDec = np.deg2rad(-central_phase[1] + field_phase[1])
                     fd['dRA'] = dRA
                     fd['dDec'] = dDec
 
@@ -299,7 +301,7 @@ class FourierManager:
 
     @staticmethod
     def phase_shift(vis: Sequence[complex], u: Sequence[float], v: Sequence[float],
-                    dRA: float = 0.0, dDec: float = 0.0) -> np.ndarray:
+                    dRA: float , dDec: float ) -> np.ndarray:
         """Apply phase shift corresponding to RA/Dec offsets (radians).
         """
         vis = np.asarray(vis); u = np.asarray(u); v = np.asarray(v)

@@ -111,46 +111,59 @@ class PlotMaps:
             setup_plot_style()
 
         map_types = types if isinstance(types, (list, tuple)) else [types]
-        allowed_types = {'input','filtered','residual','data'}
+        allowed_types = {'input','filtered','residual','data','deconvolved'}
         invalid = [t for t in map_types if t not in allowed_types]
         if invalid:
             raise ValueError(f"Unsupported map type(s): {invalid}. Allowed types: {sorted(allowed_types)}")
-        
-        # Locate dataset entry and pick single field/spw via helper
-        ds_entry = self.model_maps[model_name][data_name]
-        fkey = self._resolve_key(list(ds_entry.keys()), field, prefix='field')
-        spw_dict = ds_entry[fkey]
-        skey = self._resolve_key(list(spw_dict.keys()), spw, prefix='spw')
-        entry = spw_dict[skey]
-        
-        # Proceed with single field/spw plotting (restructured & robust)
-        header = entry['header']
-        ipix_deg, jpix_deg = self._pixel_scale_deg(header)
+        # Access top-level matched_models entry for potential 'deconvolved' image
+        mm_entry = self.matched_models[model_name][data_name]
 
-        y_map = self._extract_plane(entry['model_data'])  # y * PB
-        
-        image_plane_jy = self._extract_plane(entry.get('image_data')) if entry.get('image_data') is not None else None
-        want_filtered = any(t in ('filtered','residual') for t in map_types)
-        dirty_model = entry.get('dirty_model')
-        dirty_resid = entry.get('dirty_resid')
-        if want_filtered and (dirty_model is None or dirty_resid is None):
-            sm_entry = self.matched_models[model_name][data_name]['sampled_model'][fkey][skey]
-            u = sm_entry['u']; v = sm_entry['v']; w = sm_entry['weights']
-            model_vis = sm_entry['model_vis']; resid_vis = sm_entry['resid_vis']
-            plane_pb = self._extract_plane(entry['model_data'])  # ensure defined
-            npix = plane_pb.shape[0]
-            pix_deg = abs(header.get('CDELT1') or header.get('CD1_1'))
-            dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
-            dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
-            entry['dirty_model'] = dirty_model
-            entry['dirty_resid'] = dirty_resid
-        
-        bmaj = header.get('BMAJ'); bmin = header.get('BMIN')
-        _ = JyBeamToJyPix(ipix_deg, jpix_deg, bmaj, bmin) if (bmaj and bmin) else 1.0  # placeholder if needed later
+        # Try to populate per-field/spw variables only if maps exist for this dataset
+        ds_entry = self.model_maps.get(model_name, {}).get(data_name)
+        header = {}
+        ipix_deg = None
+        jpix_deg = None
+        y_map = None
+        image_plane_jy = None
+        dirty_model = None
+        dirty_resid = None
+
+        if ds_entry is not None:
+            # pick a field/spw via helper
+            fkey = self._resolve_key(list(ds_entry.keys()), field, prefix='field')
+            spw_dict = ds_entry[fkey]
+            skey = self._resolve_key(list(spw_dict.keys()), spw, prefix='spw')
+            entry = spw_dict[skey]
+
+            # Proceed with single field/spw plotting (restructured & robust)
+            header = entry.get('header', {})
+            ipix_deg, jpix_deg = self._pixel_scale_deg(header)
+
+            y_map = self._extract_plane(entry['model_data'])  # y * PB
+            image_plane_jy = self._extract_plane(entry.get('image_data')) if entry.get('image_data') is not None else None
+
+            want_filtered = any(t in ('filtered','residual') for t in map_types)
+            dirty_model = entry.get('dirty_model')
+            dirty_resid = entry.get('dirty_resid')
+            if want_filtered and (dirty_model is None or dirty_resid is None):
+                sm_entry = self.matched_models[model_name][data_name]['sampled_model'][fkey][skey]
+                u = sm_entry['u']; v = sm_entry['v']; w = sm_entry['weights']
+                model_vis = sm_entry['model_vis']; resid_vis = sm_entry['resid_vis']
+                plane_pb = self._extract_plane(entry['model_data'])  # ensure defined
+                npix = plane_pb.shape[0]
+                pix_deg = abs(header.get('CDELT1') or header.get('CD1_1'))
+                dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
+                dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
+                entry['dirty_model'] = dirty_model
+                entry['dirty_resid'] = dirty_resid
+
+            bmaj = header.get('BMAJ') if header else None
+            bmin = header.get('BMIN') if header else None
+            _ = JyBeamToJyPix(ipix_deg, jpix_deg, bmaj, bmin) if (bmaj and bmin and ipix_deg is not None) else 1.0  # placeholder if needed later
         
         panels = [] 
         for t in map_types:
-            if t == 'input':
+            if t == 'input' and y_map is not None:
                 panels.append(('input', self._extract_plane(y_map)/1e-4, 'y (1e-4)'))
             elif t == 'filtered' and dirty_model is not None:
                 panels.append(('filtered', self._extract_plane(dirty_model)*1e3, 'mJy/beam'))
@@ -158,8 +171,14 @@ class PlotMaps:
                 panels.append(('residual', self._extract_plane(dirty_resid)*1e3, 'mJy/beam'))
             elif t == 'data' and image_plane_jy is not None:
                 panels.append(('data', self._extract_plane(image_plane_jy)*1e3, 'mJy/beam'))
+            elif t == 'deconvolved':
+                deconv = mm_entry.get('deconvolved')
+                if deconv is None:
+                    raise ValueError(f"No deconvolved image found for {model_name}/{data_name}")
+                panels.append(('deconvolved', self._extract_plane(deconv), 'Jy/beam'))
         
-        amp_arrays = [arr for name, arr, unit in panels if unit.startswith('mJy')]
+        # Collect arrays for all non-'input' panels (include 'deconvolved' here)
+        amp_arrays = [arr for name, arr, unit in panels if name != 'input']
         if amp_arrays:
             vmin = min(np.nanmin(a) for a in amp_arrays)
             vmax = -vmin
@@ -174,10 +193,11 @@ class PlotMaps:
         
         for idx_col, (ax, (name, arr, unit)) in enumerate(zip(axes, panels)):
             im_kwargs = dict(origin='lower', cmap=cmap)
-            if unit.startswith('mJy') and vmin is not None:
+            # apply symmetric vmin/vmax to every non-'input' panel
+            if name != 'input' and vmin is not None:
                 im_kwargs.update(vmin=vmin, vmax=vmax)
             im = ax.imshow(arr, **im_kwargs, **imshow_kwargs)
-            ax.set_title(f"{name} {fkey}:{skey}")
+            ax.set_title(f"{name}")
             # Aspect management (try/except in case backend/version mismatch)
             try:
                 ax.set_aspect(aspect)

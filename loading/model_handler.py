@@ -140,6 +140,7 @@ class ModelHandler:
                 maps[field_key][spw_key] = {
                     'model_data': model_map,
                     'image_data': image_data,
+                    'pbeam_data': pbeam_data,
                     'header': header,
                 }
         return maps
