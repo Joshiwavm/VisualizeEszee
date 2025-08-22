@@ -120,5 +120,10 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
                 return
             # If both model and data specified, start at that node without extra root label
             recurse(target, '', True, 1)
+            # print assembled lines
+            for ln in lines:
+                print(ln)
         else:
             recurse(target, '', True, 1)
+            for ln in lines:
+                print(ln)

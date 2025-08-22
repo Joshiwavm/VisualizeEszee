@@ -37,7 +37,7 @@ def apply_publication_defaults():
     """
     try:
         plt.rcParams.update({
-            'font.size': 12,
+            'font.size': 10,
             'axes.labelsize': 12,
             'xtick.labelsize': 10,
             'ytick.labelsize': 10,
@@ -46,7 +46,7 @@ def apply_publication_defaults():
             'lines.linewidth': 1.5,
             'axes.linewidth': 1.0,
             'grid.alpha': 0.3,
-            'figure.dpi': 100,
+            'figure.dpi': 300,
             'savefig.dpi': 300,
             'savefig.bbox': 'tight'
         })

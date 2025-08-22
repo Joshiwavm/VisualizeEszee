@@ -49,8 +49,6 @@ class DataHandler:
             if len(spws_nested) != len(fields):
                 raise ValueError(f"Length of spws ({len(spws_nested)}) must match length of fields ({len(fields)})")
 
-            print(f"Loading data for {len(fields)} field(s) with structure: {dict(zip(fields, spws_nested))}")
-
             uvdata = {}
             for f, field in enumerate(fields):
                 print(f"  Processing field {field} with spws: {spws_nested[f]}")
@@ -80,9 +78,7 @@ class DataHandler:
                 'spws': spws_nested,  # Store the normalized nested structure
                 'binvis': binvis,
             }
-            self.data['uv'][name]['metadata'] = metadata
-            print(f"Data loaded successfully for dataset '{name}' with {len(fields)} field(s)")
-                
+            self.data['uv'][name]['metadata'] = metadata                
 
         if obstype.lower() == 'act':
 
