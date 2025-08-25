@@ -9,13 +9,6 @@ from astropy.cosmology import Planck18 as cosmo
 import scipy.special
 import scipy.integrate as _scint
 
-try:
-    import corner
-    HAS_CORNER = True
-except ImportError:
-    HAS_CORNER = False
-    print("Warning: corner package not available. Some functions may not work.")
-
 # Physical constants and conversions
 Tcmb    = 2.7255
 mec2    = ((const.m_e * const.c * const.c).to(u.keV)).value
@@ -283,33 +276,3 @@ def l_to_uvdist(ell):
 def uvdist_to_l(uvdist):
     """Convert uv-distance in kilolambda to spatial wavenumber l."""
     return arcsec_to_l(uvdist_to_arcsec(uvdist))
-
-
-# ------------------------ Sampling / I/O helpers ------------------------
-def get_samples(filename, major=[None], flux=[None]):
-    """Load nested sampling results and extract weighted quantiles.
-
-    Note: expects an npz with entries similar to the original codebase.
-    """
-    if not HAS_CORNER:
-        raise ImportError("corner package is required for this function. Install with: pip install corner")
-
-    results = np.load(filename, allow_pickle=True)
-    results = results['samples']
-    samples = np.copy(results['samples'])
-
-    if major[0] is not None:
-        for i in major:
-            samples[:, i] *= 3600
-
-    if flux[0] is not None:
-        for i in flux:
-            samples[:, i] *= 1e3
-
-    weights = results['logwt'] - scipy.special.logsumexp(results['logwt'] - results['logz'][-1])
-    weights = np.exp(weights - results['logz'][-1])
-    edges = np.array([
-        corner.quantile(samples[:, r], [0.16, 0.50, 0.84], weights=weights)
-        for r in range(samples.shape[1])
-    ])
-    return edges

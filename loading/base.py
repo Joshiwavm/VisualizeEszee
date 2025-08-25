@@ -6,10 +6,9 @@ from a single base in other parts of the codebase.
 """
 from __future__ import annotations
 
-from . import DataHandler, ModelHandler
+from . import DataHandler, ModelHandler, LoadPickles, LoadPickles
 
-
-class Loader(DataHandler, ModelHandler):
+class Loader(DataHandler, ModelHandler, LoadPickles):
     """Simple mixin that initialises DataHandler and ModelHandler.
 
     Both `DataHandler` and `ModelHandler` in the project use explicit
@@ -20,6 +19,7 @@ class Loader(DataHandler, ModelHandler):
         # Keep explicit initialisation to match previous usage sites
         DataHandler.__init__(self)
         ModelHandler.__init__(self)
+        LoadPickles.__init__(self)
 
     # ------------------------------------------------------------------
     # Matching: always (re)build Fourier products (no flags)

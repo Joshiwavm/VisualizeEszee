@@ -4,79 +4,67 @@ from astropy import units as u
 from astropy import constants as const
 from ..model.models import *
 from ..model.unitwrapper import TransformInput  # renamed from transform
-from ..utils import calculate_r500, ysznorm
-from ..utils.utils import cosmo
+from ..utils import calculate_r500, ysznorm, cosmo
+
+from typing import Tuple, Sequence, Dict, Any, Optional
 
 class ModelHandler:
     """Handles model creation and sky map generation."""
 
-    def add_model(self, name, source_type, model_type=None, parameters=None,
-                  band=None, array=None, fields=None, spws=None, binvis=None, data_name: str = None, **kwargs):
-        """Register a model.
-
-        If immediate spatial metadata provided (band/array/fields/spws), they are stored
-        under key (data_name if given else '__legacy__'). Additional datasets added later
-        via match_model() appear as new keys at models[name][data_name].
-        """
-        if source_type not in ('parameters', 'pickle'):
-            raise ValueError("source_type must be 'parameters' or 'pickle'")
-        
-        immediate_maps = all(v is not None for v in (band, array, fields, spws))
-        
-        spws_nested = None
-        if immediate_maps:
-            if not isinstance(fields, list):
-                fields = [fields]
-            if not isinstance(spws, list):
-                spws_nested = [[spws] for _ in fields]
-            elif len(spws) > 0 and not isinstance(spws[0], list):
-                spws_nested = [spws for _ in fields]
-            else:
-                spws_nested = spws
-            if len(spws_nested) != len(fields):
-                raise ValueError(f"Length of spws ({len(spws_nested)}) must match length of fields ({len(fields)})")
+    def add_model(self, name: str | None, source_type: str | None, model_type: str | None = None,
+                    parameters: dict | None = None, quantiles: Sequence[float] | None = None, marginalized: bool = False, 
+                    filename: str | None = None):
+        """Register a model."""
         
         # Core model record
         if source_type == 'parameters':
             if model_type is None:
-                model_type = kwargs.get('model_type', 'custom')
+                raise ValueError("model type required to make a model")
             if parameters is None:
-                parameters = kwargs.get('parameters', {})
+                raise ValueError("parameters required to make a model")
             self.models[name] = {
                 'source': 'parameters',
                 'type': model_type,
                 'parameters': parameters,
             }
-        
-        else:
-            filename = kwargs.get('filename')
+
+        elif source_type == 'pickle':
+            
             if filename is None:
                 raise ValueError("filename required for pickle source_type")
-            major_indices = kwargs.get('major_indices', [None])
-            flux_indices = kwargs.get('flux_indices', [None])
-            from ..model.models import get_samples
-            edges = get_samples(filename, major=major_indices, flux=flux_indices)
-            self.models[name] = {
-                'source': 'pickle',
-                'filename': filename,
-                'quantiles': edges,
-                'major_indices': major_indices,
-                'flux_indices': flux_indices,
-            }
 
-        # Attach immediate spatial metadata under chosen key
-        if immediate_maps:
-            key = data_name if data_name else '__legacy__'
-            self.models[name][key] = {
-                'band': band,
-                'array': array,
-                'fields': fields,
-                'spws': spws_nested,
-                'binvis': binvis,
-            }
-            self.add_model_maps(name, dataset_name=key, **kwargs)
+            # Normalize data_name to list
+            if isinstance(quantiles, (list, tuple)):
+                quantiles = list(quantiles)
+            else:
+                quantiles = [quantiles]
 
-        return self.models[name]
+            if not marginalized:
+                
+                parameters = self.get_parameters_from_quantiles(filename, quantiles)
+            
+                for i, parameter in enumerate(parameters):  
+                    self.models[name+'_q'+str(quantiles[i])] = {
+                        'source': 'pickle',
+                        'filename': filename,
+                        'quantile': quantiles[i],
+                        'parameters': parameter,
+
+                    }
+            else:
+                quantiles = None
+                parameters = None
+
+                self.models[name] = {
+                        'source': 'pickle',
+                        'filename': filename,
+                        'marginalized': True,
+                        'parameters': parameter,
+
+                    }
+
+        else:
+            raise ValueError("Invalid source_type, must be 'parameters' or 'pickle'")
 
     def add_model_maps(self, name: str, dataset_name: str, **kwargs):
         """Build model maps for model[name][dataset_name] (fields/spws level)."""
