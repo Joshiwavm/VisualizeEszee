@@ -49,8 +49,9 @@ class PlotRadialDistributions:
 
         # Calculate phase shift needed to move this field to the chosen central phase center
         field_phase_center = field_data['phase_center']
-        dRA_rad =  np.deg2rad(central_phase_center[0] - field_phase_center[0])  # to arcsec
-        dDec_rad = np.deg2rad(central_phase_center[1] - field_phase_center[1])  # to arcsec
+        dRA_rad =  np.deg2rad(central_phase_center[0] - field_phase_center[0]) *\
+                   np.cos(np.deg2rad(0.5 * (central_phase_center[1] + field_phase_center[1])))
+        dDec_rad = np.deg2rad(central_phase_center[1] - field_phase_center[1])
 
         # Collect data from all SPWs in this (central) field
         for spw_name, spw_data in field_data.items():
@@ -119,7 +120,8 @@ class PlotRadialDistributions:
 
         print(model_name, data_name, central_phase_center_models, field_phase_center)
 
-        dRA_rad = np.deg2rad(central_phase_center_models[0] - field_phase_center[0])
+        dRA_rad = np.deg2rad(central_phase_center_models[0] - field_phase_center[0]) *\
+                  np.cos(np.deg2rad(0.5 * (central_phase_center_models[1] + field_phase_center[1])))
         dDec_rad = np.deg2rad(central_phase_center_models[1] - field_phase_center[1])
 
         # Access model map and grid parameter

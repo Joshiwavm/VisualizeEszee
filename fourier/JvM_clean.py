@@ -91,13 +91,12 @@ class Deconvolve:
         npix = model_smoothed.shape[0]
         pixel_scale_deg = ipix_deg
         resid = self.multivis_to_image(model_name,
-                                       data_name,
+                                       data_names,
                                        use='resid',
-                                       fields=['field0'],
                                        npix=npix,
                                        pixel_scale_deg=pixel_scale_deg,
                                        calib=1.0,
-                                       align=True)
+                                       align=False)
 
         jvm_image = resid + model_smoothed
 

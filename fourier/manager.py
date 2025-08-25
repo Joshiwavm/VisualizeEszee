@@ -267,8 +267,8 @@ class FourierManager:
                                            npix=npix, pixel_scale_deg=pixel_scale_deg,
                                            normalize=normalize)
 
-    def multivis_to_image(self, model_name: str, data_name: str,
-                          use: str = 'data', 
+    def multivis_to_image(self, model_name: str, data_name: str | Sequence[str],
+                          use: str = 'data',
                           fields: Optional[Sequence[str]] = None,
                           spws: Optional[Sequence[str]] = None,
                           npix: int = 1024, pixel_scale_deg: Optional[float] = None,
@@ -297,77 +297,110 @@ class FourierManager:
         image : np.ndarray
             Dirty image (npix x npix)
         """
+        # Normalize data_name to list
+        if isinstance(data_name, (list, tuple)):
+            data_names = list(data_name)
+        else:
+            data_names = [data_name]
+
         # Validate presence
         if model_name not in self.matched_models:
             raise ValueError(f"Model '{model_name}' not found in matched_models")
-        if data_name not in self.matched_models[model_name]:
-            raise ValueError(f"Data '{data_name}' not found for model '{model_name}'")
+        for dn in data_names:
+            if dn not in self.matched_models[model_name]:
+                raise ValueError(f"Data '{dn}' not found for model '{model_name}'")
 
-        mm_entry = self.matched_models[model_name][data_name]
-
-        # Ensure sampled_model exists; if not, call sample_fft for each map entry
-        sampled = mm_entry.get('sampled_model', {})
-        if not sampled:
-            maps = mm_entry.get('maps', {})
-            for field_key, spw_dict in maps.items():
-                for spw_key in spw_dict.keys():
-                    # populate sampled_model entries using provided calib
-                    self.sample_fft(model_name, data_name, calib, field_key, spw_key)
+        # Ensure sampled_model exists for each dataset; if not, call sample_fft for each map entry
+        for dn in data_names:
+            mm_entry = self.matched_models[model_name][dn]
             sampled = mm_entry.get('sampled_model', {})
+            if not sampled:
+                maps = mm_entry.get('maps', {})
+                for field_key, spw_dict in maps.items():
+                    for spw_key in spw_dict.keys():
+                        # populate sampled_model entries using provided calib
+                        self.sample_fft(model_name, dn, calib, field_key, spw_key)
 
-        # Build list of field dicts for the low-level helper
+        # Build list of field dicts for the low-level helper across datasets
         field_dicts = []
         pixel_scales = []
         pix_N_map = []
 
         # Determine central phase center for optional alignment
-        central_field = self._find_central_field(data_name)
-        central_phase = self.uvdata[data_name][central_field]['phase_center']
+        central_phase = None
+        if align:
+            ras = []
+            decs = []
+            refs = []
+            for dn in data_names:
+                uvmap = self.uvdata.get(dn, {})
+                for fk, v in uvmap.items():
+                    if fk == 'metadata':
+                        continue
+                    pc = v.get('phase_center')
+                    if pc is None:
+                        continue
+                    ras.append(pc[0]); decs.append(pc[1])
+                    refs.append((dn, fk))
+            if ras and decs:
+                ras = np.array(ras); decs = np.array(decs)
+                center_ra = np.mean(ras); center_dec = np.mean(decs)
+                dists = np.sqrt((ras - center_ra)**2 + (decs - center_dec)**2)
+                idx0 = int(np.argmin(dists))
+                central_phase = (center_ra, center_dec)
+                central_field = f"{refs[idx0][0]}:{refs[idx0][1]}"
+                print(f"Central field for data '{data_names}' is '{central_field}'")
 
-        # Iterate sampled entries
-        for field_key, spw_map in sampled.items():
-            if (fields is not None) and (field_key not in fields):
-                continue
-            # attempt to get pixel scale info from fft_map for this field/spw
-            for spw_key, entry in spw_map.items():
-                if (spws is not None) and (spw_key not in spws):
+        # Iterate sampled entries for each dataset
+        for dn in data_names:
+            sampled = self.matched_models[model_name][dn].get('sampled_model', {})
+            for field_key, spw_map in sampled.items():
+                if (fields is not None) and (field_key not in fields):
                     continue
+                for spw_key, entry in spw_map.items():
+                    if (spws is not None) and (spw_key not in spws):
+                        continue
 
-                # collect pixel-scale info directly from stored map header
-                cd1 = self.matched_models[model_name][data_name]['maps'][field_key][spw_key]['header'].get('CDELT1') or \
-                        self.matched_models[model_name][data_name]['maps'][field_key][spw_key]['header'].get('CD1_1')
-                pixel_scales.append(abs(cd1))
+                    mm_maps_entry = self.matched_models[model_name][dn]['maps'][field_key][spw_key]
+                    cd1 = mm_maps_entry['header'].get('CDELT1') or mm_maps_entry['header'].get('CD1_1')
+                    pixel_scales.append(abs(cd1))
 
-                plane = extract_plane(self.matched_models[model_name][data_name]['maps'][field_key][spw_key].get('model_data'))
-                pix_N_map.append((int(np.asarray(plane).shape[0]) if plane is not None else np.nan, cd1))
+                    plane = extract_plane(mm_maps_entry.get('model_data'))
+                    pix_N_map.append((int(np.asarray(plane).shape[0]) if plane is not None else np.nan, cd1))
 
-                # Choose which visibility to use
-                if use == 'data':
-                    vis = entry['data_vis']
-                elif use == 'model':
-                    vis = entry['model_vis']
-                elif use == 'resid':
-                    vis = entry['resid_vis']
-                else:
-                    raise ValueError("use must be 'data', 'model' or 'resid'")
+                    # Choose which visibility to use
+                    if use == 'data':
+                        vis = entry['data_vis']
+                    elif use == 'model':
+                        vis = entry['model_vis']
+                    elif use == 'resid':
+                        vis = entry['resid_vis']
+                    else:
+                        raise ValueError("use must be 'data', 'model' or 'resid'")
 
-                fd = {
-                    'u': entry['u'],
-                    'v': entry['v'],
-                    'vis': vis,
-                    'weights': entry['weights'],
-                    'name': model_name + data_name + field_key + spw_key
-                }
+                    fd = {
+                        'u': entry['u'],
+                        'v': entry['v'],
+                        'vis': vis,
+                        'weights': entry['weights'],
+                        'name': model_name + dn + field_key + spw_key,
+                        'data_name': dn,
+                    }
 
-                # optional alignment offsets (degrees)
-                if align:
-                    field_phase = self.uvdata[data_name].get(field_key, {}).get('phase_center')
-                    dRA = np.deg2rad(-central_phase[0] + field_phase[0])
-                    dDec = np.deg2rad(-central_phase[1] + field_phase[1])
-                    fd['dRA'] = dRA
-                    fd['dDec'] = dDec
+                    # optional alignment offsets (degrees)
+                    if align and (central_phase is not None):
+                        field_phase = self.uvdata[dn].get(field_key).get('phase_center')
+                        
+                        dRA = np.deg2rad(central_phase[0] - field_phase[0])*\
+                                np.cos(np.deg2rad(0.5 * (central_phase[1] + field_phase[1])))
+                        dDec = np.deg2rad(central_phase[1] - field_phase[1])
 
-                field_dicts.append(fd)
+
+
+                        fd['dRA'] = dRA
+                        fd['dDec'] = dDec
+
+                    field_dicts.append(fd)
 
         # Choose pixel_scale_deg: smallest if mixed
         if pixel_scale_deg is None and pixel_scales:
