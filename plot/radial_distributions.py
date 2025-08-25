@@ -49,23 +49,24 @@ class PlotRadialDistributions:
 
         # Calculate phase shift needed to move this field to the chosen central phase center
         field_phase_center = field_data['phase_center']
-        dRA = (central_phase_center[0] - field_phase_center[0]) * 3600  # to arcsec
-        dDec = (central_phase_center[1] - field_phase_center[1]) * 3600  # to arcsec
-
-        # Apply phase shift (will be identity if central_field already equals central_phase_center)
-        shifted_data = self.apply_phase_shift(dRA, dDec, field_data)
-
+        dRA_rad =  np.deg2rad(central_phase_center[0] - field_phase_center[0])  # to arcsec
+        dDec_rad = np.deg2rad(central_phase_center[1] - field_phase_center[1])  # to arcsec
 
         # Collect data from all SPWs in this (central) field
-        for spw_name, spw_data in shifted_data.items():
+        for spw_name, spw_data in field_data.items():
             if spw_name == 'phase_center':
                 continue
+
+            # Apply phase shift
+            shifted_data = self.phase_shift(spw_data.uvreal + 1j * spw_data.uvimag,
+                                                  spw_data.uwave, spw_data.vwave,
+                                                  dRA_rad, dDec_rad)
 
             # Calculate UV distance
             uvdist = np.sqrt(spw_data.uwave**2 + spw_data.vwave**2)
 
-            all_uvreals.append(spw_data.uvreal)
-            all_uvimags.append(spw_data.uvimag)
+            all_uvreals.append(shifted_data.real)
+            all_uvimags.append(shifted_data.imag)
             all_uvdist.append(uvdist)
             all_uvwghts.append(spw_data.suvwght)
         
@@ -138,12 +139,12 @@ class PlotRadialDistributions:
             raise ValueError("axis must be 'u' or 'v'")
 
         model_vis = self.sample_uv(uv_grid, u_samples, v_samples, du, dRA=0.0, dDec=0.0)
+        shift_vis = self.phase_shift(model_vis.real + 1j * model_vis.imag,
+                                     u_samples, v_samples,
+                                     dRA_rad, dDec_rad)
 
-        phase_factor = np.exp(-2j * np.pi * (u_samples * dRA_rad + v_samples * dDec_rad))
-        model_vis = model_vis * phase_factor
-
-        real_line = np.asarray(model_vis).real
-        imag_line = np.asarray(model_vis).imag
+        real_line = np.asarray(shift_vis).real
+        imag_line = np.asarray(shift_vis).imag
 
         return k_vals_final, real_line, imag_line
 

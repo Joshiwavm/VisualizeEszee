@@ -118,63 +118,12 @@ class FourierManager:
         
         return fields[central_field_idx]
 
-    def apply_phase_shift(self, dRA, dDec, field_data):
-        """
-        Apply a phase shift to the visibilities based on an offset in RA and Dec.
-
-        Parameters
-        ----------
-        dRA : float
-            Offset in Right Ascension (arcsec).
-        dDec : float
-            Offset in Declination (arcsec).
-        field_data : dict
-            Field data containing UV coordinates and visibilities
-
-        Returns
-        -------
-        shifted_data : dict
-            Copy of field data with phase-shifted visibilities
-        """
-        shifted_data = copy.deepcopy(field_data)
-
-        # Convert the offsets from arcsec to radians
-        dRA_rad = np.deg2rad(dRA / 3600.)
-        dDec_rad = np.deg2rad(dDec / 3600.)
-
-        # Phase shift each SPW
-        for spw_name, spw_data in shifted_data.items():
-            if spw_name == 'phase_center':
-                continue
-                
-            # Form complex visibilities from original real and imaginary parts
-            vis = spw_data.uvreal + 1j * spw_data.uvimag
-            
-            # Compute the phase factor (using (u, v) in wavelengths)
-            phase_factor = np.exp(-2j * np.pi * (spw_data.uwave * dRA_rad +
-                                                    spw_data.vwave * dDec_rad))
-            
-            # Apply the phase shift
-            new_vis = vis * phase_factor
-
-            # I need to a primairy beam correction!!!!!!
-            
-            # Store the phase-shifted visibilities
-            shifted_data[spw_name] = spw_data._replace(
-                uvreal=new_vis.real,
-                uvimag=new_vis.imag
-            )
-
-        return shifted_data
-
     @staticmethod
     def phase_shift(vis: Sequence[complex], u: Sequence[float], v: Sequence[float],
                     dRA: float , dDec: float ) -> np.ndarray:
         """Apply phase shift corresponding to RA/Dec offsets (radians).
         """
         vis = np.asarray(vis); u = np.asarray(u); v = np.asarray(v)
-        if vis.shape != u.shape:
-            raise ValueError("vis and u/v shapes mismatch")
         phase = np.exp(-2j * np.pi * (u * dRA + v * dDec))
         return vis * phase
 
