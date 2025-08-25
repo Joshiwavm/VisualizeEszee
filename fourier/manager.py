@@ -251,7 +251,6 @@ class FourierManager:
         accum_u, accum_v, accum_vis, accum_w = [], [], [], []
         for fd in fields:
 
-            # print(fd['name'])
             u = np.asarray(fd['u']); v = np.asarray(fd['v'])
             w = np.asarray(fd['weights']); vis = np.asarray(fd['vis']) 
 
@@ -349,7 +348,6 @@ class FourierManager:
                 idx0 = int(np.argmin(dists))
                 central_phase = (center_ra, center_dec)
                 central_field = f"{refs[idx0][0]}:{refs[idx0][1]}"
-                print(f"Central field for data '{data_names}' is '{central_field}'")
 
         # Iterate sampled entries for each dataset
         for dn in data_names:
