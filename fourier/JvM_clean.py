@@ -104,7 +104,6 @@ class Deconvolve:
         # are discoverable by consumers (e.g. plot_map with data_name=[...])
         concat_dn = "+".join(data_names)
         assoc = self.matched_models[model_name].setdefault(concat_dn, {})
-        assoc.setdefault('JvM_clean', {})
         assoc['deconvolved'] = jvm_image.astype(np.float32)
 
         if save_output is not None:

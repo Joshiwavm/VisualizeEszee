@@ -96,6 +96,7 @@ class PlotMaps:
             raise ValueError(f"Unsupported map type(s): {invalid}. Allowed types: {sorted(allowed_types)}")
         # Access top-level matched_models entry for potential 'deconvolved' image
         # Allow `data_name` to be a list/tuple (concatenated storage key used by JvM_clean)
+        
         if isinstance(data_name, (list, tuple)):
             concat_dn = "+".join(data_name)
             mm_entry = self.matched_models[model_name].get(concat_dn, {})
@@ -103,7 +104,16 @@ class PlotMaps:
             mm_entry = self.matched_models[model_name].get(data_name, {})
 
         # Try to populate per-field/spw variables only if maps exist for this dataset
-        ds_entry = self.model_maps.get(model_name, {}).get(data_name)
+        # If user passed a list/tuple for data_name, use the first dataset for
+        # per-field/spw selection (deconvolved maps are looked up via concatenated key above).
+        fkey = ''
+        skey = ''
+        if isinstance(data_name, (list, tuple)):
+            first_dn = data_name[0] if data_name else None
+            ds_entry = self.model_maps.get(model_name, {}).get(first_dn)
+        else:
+            ds_entry = self.model_maps.get(model_name, {}).get(data_name)
+            
         header = {}
         ipix_deg = None
         jpix_deg = None
