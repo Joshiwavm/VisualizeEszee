@@ -96,19 +96,21 @@ class Deconvolve:
                                        npix=npix,
                                        pixel_scale_deg=pixel_scale_deg,
                                        calib=1.0,
-                                       align=False)
+                                       align=True)
 
         jvm_image = resid + model_smoothed
 
-        # Store result
-        assoc = self.matched_models[model_name].setdefault(best_dn, {})
+        # Store result under a concatenated data-name key so multi-dataset runs
+        # are discoverable by consumers (e.g. plot_map with data_name=[...])
+        concat_dn = "+".join(data_names)
+        assoc = self.matched_models[model_name].setdefault(concat_dn, {})
         assoc.setdefault('JvM_clean', {})
         assoc['deconvolved'] = jvm_image.astype(np.float32)
 
         if save_output is not None:
             os.makedirs(save_output, exist_ok=True)
             h = header.copy(); h['BUNIT'] = 'Jy/beam'
-            fname = os.path.join(save_output, f"{model_name}_{best_dn}_{best_field}_{best_spw}_JvM_clean.fits")
+            fname = os.path.join(save_output, f"{model_name}_{concat_dn}_{best_field}_{best_spw}_JvM_clean.fits")
             print(f"Writing JvM-cleaned image to {fname}")
             fits.writeto(fname, jvm_image.astype(np.float32), header=h, overwrite=True)
 

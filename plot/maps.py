@@ -95,7 +95,12 @@ class PlotMaps:
         if invalid:
             raise ValueError(f"Unsupported map type(s): {invalid}. Allowed types: {sorted(allowed_types)}")
         # Access top-level matched_models entry for potential 'deconvolved' image
-        mm_entry = self.matched_models[model_name][data_name]
+        # Allow `data_name` to be a list/tuple (concatenated storage key used by JvM_clean)
+        if isinstance(data_name, (list, tuple)):
+            concat_dn = "+".join(data_name)
+            mm_entry = self.matched_models[model_name].get(concat_dn, {})
+        else:
+            mm_entry = self.matched_models[model_name].get(data_name, {})
 
         # Try to populate per-field/spw variables only if maps exist for this dataset
         ds_entry = self.model_maps.get(model_name, {}).get(data_name)
@@ -147,7 +152,11 @@ class PlotMaps:
             elif t == 'data' and image_plane_jy is not None:
                 panels.append(('data', extract_plane(image_plane_jy)*1e3, 'mJy/beam'))
             elif t == 'deconvolved':
+                # If mm_entry is empty (e.g. data_name given as list), try concatenated key
                 deconv = mm_entry.get('deconvolved')
+                if deconv is None and isinstance(data_name, (list, tuple)):
+                    concat_dn = "+".join(data_name)
+                    deconv = self.matched_models[model_name].get(concat_dn, {}).get('deconvolved')
                 if deconv is None:
                     raise ValueError(f"No deconvolved image found for {model_name}/{data_name}")
                 panels.append(('deconvolved', extract_plane(deconv), 'Jy/beam'))
