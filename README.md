@@ -1,73 +1,30 @@
 
 # VisualizeEszee
 
-VisualizeEszee provides utilities to build, sample, and visualize Sunyaev-Zel'dovich (SZ) cluster models for both interferometric and single-dish data. It is designed for flexible model registration, parameter management, and map-based analysis workflows.
+Lightweight utilities for constructing and evaluating SZ cluster models (pressure / ancillary components) against interferometric and single‑dish data.
 
-## Getting Started
+## Install
+```bash
+pip install -e .
+```
 
-1. **Install the package** (editable mode recommended for development):
+## Minimal Example
+```python
+from VisualizeEszee import Manager
+from VisualizeEszee.model import get_models
 
-    ```bash
-    pip install -e .
-    ```
+pm = Manager(target='CL_J0459-4947')
+pm.add_data(name='B3_12m', obstype='interferometer', band='band3', array='com12m',
+            fields=['0'], spws=['5','7','9','11'],
+            binvis='output/com12m/output_band3_com12m.im.field-fid.spw-sid')
+params = get_models('a10_up', ra=74.92296, dec=-49.78184, redshift=1.71, mass=2.5e14)
+pm.add_model(name='pA10', source_type='parameters', model_type=params['model']['type'], parameters=params)
+pm.match_model()
+pm.plot_map(model_name='pA10', data_name='B3_12m', types=['data','model','residual'])
+```
 
-2. **Basic Workflow**
-
-   - **Initialize a manager for your target cluster:**
-     ```python
-     from VisualizeEszee import Manager
-     pm = Manager(target='CL_J0459-4947')
-     ```
-
-   - **Register observational data:**
-     ```python
-     pm.add_data(
-         name='Band3_12m',
-         obstype='interferometer',
-         band='band3',
-         array='com12m',
-         fields=['0'],
-         spws=['5','7','9','11'],
-         binvis='../output/com12m/output_band3_com12m.im.field-fid.spw-sid'
-     )
-     ```
-
-   - **Build model parameters using cluster properties:**
-     ```python
-     from VisualizeEszee.model import get_models
-     params = get_models('a10_up', ra=74.9229603, dec=-49.7818421, redshift=1.71, mass=2.5e14)
-     ```
-
-   - **Register a model for analysis:**
-     ```python
-     pm.add_model(
-         name='0459_1',
-         source_type='parameters',
-         model_type=params['model']['type'],
-         parameters=params
-     )
-     ```
-
-   - **Match the model to data and visualize results:**
-     ```python
-     pm.match_model()
-     pm.plot_map(model_name='0459_1', data_name='Band3_12m', types=['filtered','data','residual'])
-     ```
-
-   - **Perform deconvolution and plot deconvolved maps:**
-     ```python
-     pm.JvM_clean(model_name='0459_1', data_name='Band3_12m')
-     pm.plot_map(model_name='0459_1', data_name='Band3_12m', types='deconvolved')
-     ```
-
-## Documentation & Guides
-
-- **Parameter usage and customization:** See `CLUSTER_PARAMETERS_GUIDE.md` for details on how to provide cluster-specific parameters and customize model inputs.
-- **Model system structure:** See `MODEL_RESTRUCTURE_SUMMARY.md` for a summary of the model YAML structure, refactoring, and coordinate grid construction.
+## Docs
+See `TUTORIAL.md` for full workflow (parameter styles, quantiles, deconvolution, extensions). Local notebooks, if any, are examples only; the tutorial is canonical.
 
 ## Notes
-- Adapt data paths and names to your local setup as needed.
-- Some functions may require additional dependencies (e.g., NUFFT backends); ensure these are installed in your environment.
-
-## Next Steps
-- Explore the guides in this directory for deeper usage patterns and advanced workflows.
+Adapt paths to your environment. Optional acceleration libraries can be added as needed.
