@@ -7,6 +7,7 @@ from a single base in other parts of the codebase.
 from __future__ import annotations
 
 from . import DataHandler, ModelHandler, LoadPickles, LoadPickles
+import os
 
 class Loader(DataHandler, ModelHandler, LoadPickles):
     """Simple mixin that initialises DataHandler and ModelHandler.
