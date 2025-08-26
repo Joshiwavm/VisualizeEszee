@@ -10,6 +10,8 @@ from . import DataHandler, ModelHandler, LoadPickles, LoadPickles
 
 from ..utils.utils import extract_plane
 import os
+from astropy.io import fits
+import numpy as np
 
 class Loader(DataHandler, ModelHandler, LoadPickles):
     """Simple mixin that initialises DataHandler and ModelHandler.
