@@ -137,8 +137,6 @@ class ModelHandler:
 
         rs_sample = rs[1:] if model_type == 'gnfwPressure' else rs
 
-        print(input_par)
-
         if model_type == 'A10Pressure':
             profile = a10Profile(rs_sample, 
                                  input_par.get('offset'), 
@@ -171,7 +169,6 @@ class ModelHandler:
         r_grid = self._make_radial_grid(ra_map, dec_map, parameters['model'])
         
         z = parameters['model'].get('redshift', parameters['model'].get('z'))
-        print(z)
         r_phys_mpc = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(z).to(u.Mpc).value
         coord = r_phys_mpc / input_par.get('major')
         
