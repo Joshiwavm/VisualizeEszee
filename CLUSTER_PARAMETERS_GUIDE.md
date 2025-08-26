@@ -1,83 +1,106 @@
-# How to Provide Cluster-Specific Parameters
 
-## Overview
+# Cluster Parameter Usage Guide
 
-The cleaned `get_models()` function now supports multiple ways to provide cluster-specific parameters (RA, Dec, redshift, mass) while keeping the fixed hyperparameters separate.
+This guide explains how to provide cluster-specific parameters (such as RA, Dec, redshift, and mass) to VisualizeEszee's model-building functions. The system is designed to keep fixed model hyperparameters separate from cluster properties, allowing flexible and clear parameter management.
 
-## Methods to Provide Cluster Parameters
+## Supplying Cluster Parameters
 
-### Method 1: Direct Parameters (Recommended)
+VisualizeEszee supports several ways to supply cluster parameters to `get_models()`:
+
+### 1. Direct Keyword Arguments (Recommended)
+
+Supply cluster parameters directly as keyword arguments. This is the most transparent and robust method.
 
 ```python
 from VisualizeEszee.model import get_models
 
-# Provide cluster parameters directly to get_models()
-params = get_models('a10_up', 
-                   ra=74.92,         # Right ascension in degrees
-                   dec=-49.78,       # Declination in degrees  
-                   redshift=1.71,    # Redshift
-                   mass=2.5e14)      # Mass in solar masses
+params = get_models(
+    'a10_up',
+    ra=74.92,         # Right ascension (deg)
+    dec=-49.78,       # Declination (deg)
+    redshift=1.71,    # Redshift
+    mass=2.5e14       # Mass (solar masses)
+)
 
-# Result includes both fixed hyperparameters AND cluster parameters
-print(params['model']['type'])          # 'A10Pressure' (fixed)
-print(params['model']['alpha'])         # 1.051 (fixed hyperparameter)
-print(params['model']['ra'])            # 74.92 (your cluster parameter)
-print(params['model']['mass'])          # 2.5e14 (your cluster parameter)
+# The returned dictionary includes both fixed hyperparameters and your cluster parameters.
+print(params['model']['type'])   # e.g., 'A10Pressure'
+print(params['model']['ra'])     # 74.92
+print(params['model']['mass'])   # 2.5e14
 ```
 
-### Method 2: Using custom_params
+### 2. Using `custom_params` Dictionary
+
+You can pass a dictionary containing cluster parameters and/or overrides for model hyperparameters.
 
 ```python
-# Define cluster parameters in a dictionary
 cluster_params = {
     'ra': 74.92,
     'dec': -49.78,
     'redshift': 1.71,
     'mass': 2.5e14,
     'parameters': {
-        'alpha': 1.2  # Can also override hyperparameters
+        'alpha': 1.2  # Override a hyperparameter if needed
     }
 }
-
 params = get_models('a10_up', custom_params=cluster_params)
 ```
 
-### Method 3: Mixed Approach
+### 3. Mixed Approach
+
+Combine direct arguments and `custom_params` for maximum flexibility.
 
 ```python
-# Some parameters direct, others via custom_params
-params = get_models('a10_up', 
-                   ra=74.92, dec=-49.78,  # Direct
-                   custom_params={'mass': 2.5e14, 'redshift': 1.71})  # Custom
+params = get_models(
+    'a10_up',
+    ra=74.92,
+    dec=-49.78,
+    custom_params={'mass': 2.5e14, 'redshift': 1.71}
+)
 ```
 
-### Method 4: Get Fixed Parameters Only (Original Behavior)
+### 4. Fixed Hyperparameters Only
+
+If you only want the fixed model hyperparameters, call `get_models()` with just the model name. You can then handle cluster parameters elsewhere in your code.
 
 ```python
-# Get only the fixed hyperparameters, provide cluster params elsewhere
 params = get_models('a10_up')
-
-# You handle cluster parameters separately in your code
-cluster_ra = 74.92
-cluster_dec = -49.78
-cluster_z = 1.71
-cluster_mass = 2.5e14
+# Later, supply cluster parameters as needed
 ```
 
-## Complete Example
+## Example Workflow
 
 ```python
-from VisualizeEszee import PlotManager
+from VisualizeEszee import Manager
 from VisualizeEszee.model import get_models
 
-# Create PlotManager
-pm = PlotManager(target='CL_J0459-4947')
+# Initialize the manager for your target cluster
+pm = Manager(target='CL_J0459-4947')
 
-# Get model with all parameters
-params = get_models('a10_up', 
-                   ra=74.92,      # RA of your cluster
-                   dec=-49.78,    # Dec of your cluster
-                   redshift=1.71, # Redshift of your cluster  
+# Build model parameters with cluster properties
+params = get_models(
+    'a10_up',
+    ra=74.92,
+    dec=-49.78,
+    redshift=1.71,
+    mass=2.5e14
+)
+
+# Register the model
+pm.add_model(
+    name='0459_1',
+    source_type='parameters',
+    model_type=params['model']['type'],
+    parameters=params
+)
+
+# Proceed with matching, plotting, and analysis as needed
+```
+
+## Tips
+- All cluster parameters should be provided in physical units (degrees for RA/Dec, solar masses for mass).
+- You can override any model hyperparameter using the `parameters` sub-dictionary in `custom_params`.
+- The returned parameter dictionary is ready for use with model registration and map generation functions.
+
                    mass=2.5e14)   # Mass of your cluster
 
 # Use with add_model (cluster params now included)

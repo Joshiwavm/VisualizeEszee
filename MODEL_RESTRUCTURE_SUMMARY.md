@@ -11,88 +11,58 @@ This document summarizes the complete refactoring of the SZ cluster modeling cod
 - **Result**: Contains only fixed hyperparameters (e.g., `P0: 8.403`, `c500: 1.177`, `gamma: 0.3081`)
 - **Benefit**: Clean separation between model configuration and user-supplied cluster data
 
-### 2. Model YAML File Split
-- **Original**: Single `models.yml` file containing both component and spectral models
-- **New Structure**:
-  - `component_models.yml`: Non-spectral models (gnfwPressure, pointSource, etc.)
-  - `spectral_models.yml`: Spectral models (szSpectrum, dustySpectrum, etc.)
-- **Changes**: Removed `spectrum` attribute from component models
-- **Backup**: Original file saved as `models_old.yml.backup`
 
-- **File**: `VisualizeEszee/model/pressure_profiles.yml`
-- **File**: `plotter/model/parameter_utils.py`
-- **New Functions**:
-  - `load_component_models()`: Load non-spectral models
-  - `load_spectral_models()`: Load spectral models  
-  - `get_model_info(model_name, model_type)`: Get specific model information
-  - `list_available_models(model_type)`: List available models by type
-- **Enhanced `get_models()`**: 
-  - Returns only fixed hyperparameters
-  - Accepts cluster parameters via arguments or `custom_params` dict
-  - Supports both backward compatibility and new flexible interface
-- **File**: `VisualizeEszee/model/parameter_utils.py`
-### 4. ModelHandler FITS Path Flexibility
-- **File**: `plotter/loading/model_handler.py`
-- **File**: `VisualizeEszee/loading/model_handler.py`
-- **Benefit**: Flexible FITS file path construction using user-defined patterns
-- **Example**: `binvis="custom-pattern-{field}-{spw}"` generates appropriate paths
-- **File**: `VisualizeEszee/model/__init__.py`
-### 5. Module Exports Update
-- **File**: `plotter/model/__init__.py`
-- **Added**: Exports for new model utility functions
-- **Result**: Clean public API for model management
+# Model System Restructure Summary
 
-## Veszee Coordinate Grid Analysis
+This summary describes the major refactoring and improvements to the SZ cluster modeling system in VisualizeEszee. The changes focus on clarity, maintainability, and flexibility for both model configuration and analysis workflows.
 
-### _make_grid() Function
-**Purpose**: Creates a radial distance map in the image plane for model evaluation
+## Key Improvements
 
-**Process**:
-1. **Grid Creation**: 
-   ```python
-   x, y = np.meshgrid(np.arange(-len/2, len/2, 1.), np.arange(-len/2, len/2, 1.))
-   ```
-   - Creates pixel coordinate grids centered on image
-   - Adjusts for half-pixel offset (`x += 0.5`, `y -= 0.5`)
+### 1. YAML Model Configuration
+- Model hyperparameters are now defined in YAML files, with a clear separation between fixed model properties and user-supplied cluster parameters.
+- Pressure profile YAML files contain only fixed values (e.g., `P0`, `c500`, `gamma`), making it easy to see what is configurable and what is cluster-specific.
 
-2. **WCS Coordinate Transformation**:
-   ```python
-   RA  = -x * |CDELT1| / cos(CRVAL2) + CRVAL1
-   Dec = y * |CDELT2| + CRVAL2
-   ```
-   - Converts pixel coordinates to RA/Dec using WCS header
-   - Applies cosine correction for RA at given declination
+### 2. Modular Model Organization
+- Component and spectral models are split into separate YAML files for clarity.
+- Utility functions are provided to load, inspect, and list available models.
+- The `get_models()` function returns a dictionary containing all required parameters for model construction, supporting both direct arguments and custom parameter dictionaries.
 
-3. **Model-Centered Coordinate System**:
-   ```python
-   modgridx = -(RA-xc)*cosy*sint - (Dec-yc)*cost
-   modgridy = (RA-xc)*cosy*cost - (Dec-yc)*sint
-   ```
-   - Translates coordinates to model center (`xc`, `yc`)
-   - Rotates by model position angle using trigonometric functions
-   - `cosy = cos(Dec)`, `cost = cos(Angle)`, `sint = sin(Angle)`
+### 3. Flexible Data and Model Registration
+- The system supports flexible registration of observational data and models, allowing for custom FITS file path patterns and multi-dataset workflows.
+- Model registration is designed to work with both direct parameter input and posterior samples from nested sampling or MCMC.
 
-4. **Elliptical Radial Distance**:
-   ```python
-   r = sqrt(modgridx² + modgridy²/(1-e)²)
-   ```
-   - Calculates elliptical radius incorporating eccentricity `e`
-   - Accounts for elliptical cluster morphology
+### 4. Coordinate Grid Construction
+- The radial grid for model evaluation is constructed using WCS header information and cluster center/orientation parameters.
+- The process includes:
+   - Pixel grid creation centered on the image.
+   - Conversion to RA/Dec using header values and cosine correction for declination.
+   - Transformation to a model-centered coordinate system, including rotation and eccentricity for elliptical clusters.
+   - Calculation of elliptical radial distance for profile evaluation.
 
-### _make_modelimage() Function
-**Purpose**: Generates model images by interpolating radial profiles onto coordinate grids
-
-**Process**:
-1. **Grid Generation**: Calls `_make_grid()` to get radial distance map
-2. **Physical Scale Conversion**:
-   ```python
-   coord = deg2rad(grid) * angular_diameter_distance(z) / major_axis
-   ```
-   - Converts angular distances to physical coordinates
-   - Normalizes by cluster major axis scale
-
+#### Example: Radial Grid Construction
+```python
+# Create pixel coordinate grids
+x, y = np.meshgrid(np.arange(-nx/2, nx/2, 1.), np.arange(-ny/2, ny/2, 1.))
 3. **Profile Interpolation**:
+y -= 0.5
+
+# Convert to RA/Dec using WCS header
+ra_map = -x * abs(cdelt1) / np.cos(np.deg2rad(crval2)) + crval1
    ```python
+
+# Transform to model-centered coordinates
+modgrid_x = (-(ra_map - ra_center) * cosy * sint - (dec_map - dec_center) * cost)
+modgrid_y = ((ra_map - ra_center) * cosy * cost - (dec_map - dec_center) * sint)
+
+# Calculate elliptical radial distance
+r = np.sqrt(modgrid_x**2 + modgrid_y**2 / (1.0 - eccentricity)**2)
+```
+
+## Practical Notes
+- All model registration and map generation functions expect parameters in physical units (degrees, solar masses, etc.).
+- The refactored system is designed to be extensible for new model types and analysis workflows.
+- For advanced usage, see the guides in this directory for parameter customization and workflow examples.
+
    integrated_P = model_function(rs, **parameters)
    image = interp(coord, rs, integrated_P) * ysz_normalization
    ```

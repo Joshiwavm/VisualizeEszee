@@ -1,51 +1,73 @@
+
 # VisualizeEszee
 
-Lightweight utilities to build, sample and visualize SZ cluster models against interferometric and single-dish data.
+VisualizeEszee provides utilities to build, sample, and visualize Sunyaev-Zel'dovich (SZ) cluster models for both interferometric and single-dish data. It is designed for flexible model registration, parameter management, and map-based analysis workflows.
 
-## Quick start
+## Getting Started
 
-1. Install the package in editable mode (optional but useful during development):
+1. **Install the package** (editable mode recommended for development):
 
-```bash
-pip install -e .
-```
+    ```bash
+    pip install -e .
+    ```
 
-2. Minimal example (from `Notebooks/plot.ipynb`):
+2. **Basic Workflow**
 
-```python
-from VisualizeEszee import Manager
-pm = Manager(target='CL_J0459-4947')
+   - **Initialize a manager for your target cluster:**
+     ```python
+     from VisualizeEszee import Manager
+     pm = Manager(target='CL_J0459-4947')
+     ```
 
-# Add data (example adapted from notebook)
-pm.add_data(name='Band3_12m', obstype='interferometer', band='band3', array='com12m', fields=['0'], spws=['5','7','9','11'], binvis='../output/com12m/output_band3_com12m.im.field-fid.spw-sid')
+   - **Register observational data:**
+     ```python
+     pm.add_data(
+         name='Band3_12m',
+         obstype='interferometer',
+         band='band3',
+         array='com12m',
+         fields=['0'],
+         spws=['5','7','9','11'],
+         binvis='../output/com12m/output_band3_com12m.im.field-fid.spw-sid'
+     )
+     ```
 
-# Prepare model parameters
-from VisualizeEszee.model import get_models
-params = get_models('a10_up', ra=74.9229603, dec=-49.7818421, redshift=1.71, mass=2.5e14)
+   - **Build model parameters using cluster properties:**
+     ```python
+     from VisualizeEszee.model import get_models
+     params = get_models('a10_up', ra=74.9229603, dec=-49.7818421, redshift=1.71, mass=2.5e14)
+     ```
 
-# Add a model
-pm.add_model(name='0459_1', source_type='parameters', model_type=params['model']['type'], parameters=params)
+   - **Register a model for analysis:**
+     ```python
+     pm.add_model(
+         name='0459_1',
+         source_type='parameters',
+         model_type=params['model']['type'],
+         parameters=params
+     )
+     ```
 
-# Match model to all data and inspect
-pm.match_model()
-pm.plot_map(model_name='0459_1', data_name='Band3_12m', types=['filtered','data','residual'])
+   - **Match the model to data and visualize results:**
+     ```python
+     pm.match_model()
+     pm.plot_map(model_name='0459_1', data_name='Band3_12m', types=['filtered','data','residual'])
+     ```
 
-# Create a JvM-style deconvolved product and plot
-pm.JvM_clean(model_name='0459_1', data_name='Band3_12m')
-pm.plot_map(model_name='0459_1', data_name='Band3_12m', types='deconvolved')
-```
+   - **Perform deconvolution and plot deconvolved maps:**
+     ```python
+     pm.JvM_clean(model_name='0459_1', data_name='Band3_12m')
+     pm.plot_map(model_name='0459_1', data_name='Band3_12m', types='deconvolved')
+     ```
 
-3. More examples
+## Documentation & Guides
 
-- See `Notebooks/plot.ipynb` for a runnable notebook demonstrating many common workflows (data registration, plotting radial distributions, adding multiple models).
-- The markdown docs from the project have been moved into `VisualizeEszee/` for convenience:
-  - `CLUSTER_PARAMETERS_GUIDE.md`
-  - `MODEL_RESTRUCTURE_SUMMARY.md`
+- **Parameter usage and customization:** See `CLUSTER_PARAMETERS_GUIDE.md` for details on how to provide cluster-specific parameters and customize model inputs.
+- **Model system structure:** See `MODEL_RESTRUCTURE_SUMMARY.md` for a summary of the model YAML structure, refactoring, and coordinate grid construction.
 
 ## Notes
-- The notebook is a good starting point for practical usage; adapt paths and data names to your local setup.
-- If any functions require external heavy dependencies (NUFFT backends), ensure those are installed in your environment.
+- Adapt data paths and names to your local setup as needed.
+- Some functions may require additional dependencies (e.g., NUFFT backends); ensure these are installed in your environment.
 
-## Where to go next
-- Run the notebook `Notebooks/plot.ipynb` interactively to reproduce the examples and adapt them for your target cluster.
-- Open `VisualizeEszee/CLUSTER_PARAMETERS_GUIDE.md` for details on `get_models()`.
+## Next Steps
+- Explore the guides in this directory for deeper usage patterns and advanced workflows.
