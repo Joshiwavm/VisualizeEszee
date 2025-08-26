@@ -25,6 +25,7 @@ class ModelHandler:
             self.models[name] = {
                 'source': 'parameters',
                 'type': model_type,
+                'marginalized': False,
                 'parameters': parameters,
             }
 
@@ -39,28 +40,32 @@ class ModelHandler:
             else:
                 quantiles = [quantiles]
 
-            if not marginalized:
-                
-                parameters = self.get_parameters_from_quantiles(filename, quantiles)
+            if marginalized and quantiles[0] is not None:
+                raise ValueError("Cannot specify both marginalized and quantiles")
             
-                for i, parameter in enumerate(parameters):  
-                    self.models[name+'_q'+str(quantiles[i])] = {
-                        'source': 'pickle',
-                        'filename': filename,
-                        'quantile': quantiles[i],
-                        'parameters': parameter,
+            elif not marginalized:
+                parameters = self.get_parameters_from_quantiles(filename, quantiles)
 
-                    }
+                n_quants = len(parameters)
+                n_compts = len(parameters[0]) if n_quants > 0 else 0
+                for i_quant in range(n_quants):
+                    for j_compt in range(n_compts):
+                        self.models[f'{name}_q{quantiles[i_quant]}_c{j_compt}'] = {
+                            'source': 'pickle',
+                            'filename': filename,
+                            'type': parameters[i_quant][j_compt]['model']['type'],
+                            'quantile': quantiles[i_quant],
+                            'component': j_compt,
+                            'marginalized': False,
+                            'parameters': parameters[i_quant][j_compt],
+                        }
             else:
                 quantiles = None
-                parameters = None
 
                 self.models[name] = {
                         'source': 'pickle',
                         'filename': filename,
                         'marginalized': True,
-                        'parameters': parameter,
-
                     }
 
         else:
@@ -99,21 +104,14 @@ class ModelHandler:
                 ra_map = -1 * X * np.abs(cdelt1) / np.cos(np.deg2rad(crval2)) + crval1
                 dec_map = Y * np.abs(cdelt2) + crval2
 
-                if model_info['source'] == 'parameters':
+                if not model_info['marginalized']:
                     model_map = self._generate_model_from_parameters(
                         model_info['type'], model_info['parameters'], ra_map, dec_map, header
                     )
                 else:
-                    quantile_type = kwargs.get('quantile_type', '50th')
-                    n_samples = kwargs.get('n_samples', 100)
-                    if quantile_type == 'marginalized':
-                        model_map = self._generate_marginalized_model(
-                            model_info, ra_map, dec_map, header, n_samples
-                        )
-                    else:
-                        model_map = self._generate_model_from_quantiles(
-                            model_info, quantile_type, ra_map, dec_map, header
-                        )
+                    model_map = self._generate_marginalized_model(
+                        model_info, ra_map, dec_map, header
+                    )
                 
                 pbeam_file = fits_file.replace('.image.fits', '.pbeam.fits')
 
@@ -138,6 +136,8 @@ class ModelHandler:
         input_par = xform.run()
 
         rs_sample = rs[1:] if model_type == 'gnfwPressure' else rs
+
+        print(input_par)
 
         if model_type == 'A10Pressure':
             profile = a10Profile(rs_sample, 
@@ -171,6 +171,7 @@ class ModelHandler:
         r_grid = self._make_radial_grid(ra_map, dec_map, parameters['model'])
         
         z = parameters['model'].get('redshift', parameters['model'].get('z'))
+        print(z)
         r_phys_mpc = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(z).to(u.Mpc).value
         coord = r_phys_mpc / input_par.get('major')
         
@@ -234,48 +235,5 @@ class ModelHandler:
             
         # Gaussian profile
         model_map = amplitude * np.exp(-0.5 * (r_grid / major_axis_rad)**2)
-        
-        return model_map
-
-    def _generate_model_from_quantiles(self, model, quantile_type, ra_map, dec_map, header):
-        """Generate model map from specific quantile (placeholder)."""
-        quantiles = model['quantiles']
-        
-        # Map quantile_type to index
-        quantile_map = {'16th': 0, '50th': 1, '84th': 2}
-        if quantile_type not in quantile_map:
-            raise ValueError(f"quantile_type must be one of {list(quantile_map.keys())}")
-        
-        idx = quantile_map[quantile_type]
-        
-        # Extract parameters at specific quantile
-        params_at_quantile = quantiles[:, idx]
-                
-        # Placeholder: create dummy model
-        model_map = np.zeros_like(ra_map)
-        
-        # TODO: Implement model generation from quantile parameters
-        # Need to map parameter indices to physical meaning based on model type
-        
-        return model_map
-
-    def _generate_marginalized_model(self, model, ra_map, dec_map, header, n_samples):
-        """Generate marginalized model over posterior samples (placeholder)."""
-        from ..model.models import get_samples
-        
-        # Reload full samples for marginalization
-        filename = model['filename']
-        major_indices = model['major_indices']
-        flux_indices = model['flux_indices']
-                
-        # TODO: Implement proper sample drawing and marginalization
-        # This would involve:
-        # 1. Loading full posterior samples
-        # 2. Drawing n_samples from the posterior
-        # 3. Generating model for each sample
-        # 4. Computing mean/median of all models
-        
-        # Placeholder: create dummy model
-        model_map = np.zeros_like(ra_map)
         
         return model_map

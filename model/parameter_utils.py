@@ -38,6 +38,7 @@ def get_models(dist_name: str, profgeom: str = 'sph',
                redshift: Optional[float] = None, mass: Optional[float] = None,
                log10M: Optional[float] = None,
                custom_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+
     """Return merged model + spectrum parameter dictionaries for a distribution.
     Precedence (highest last): cluster_defaults < distribution params < custom_params < explicit args.
     Mass handling: log10M authoritative; derive other if only one given.
@@ -48,79 +49,88 @@ def get_models(dist_name: str, profgeom: str = 'sph',
     if dist_name not in dists:
         raise ValueError(f"Unknown distribution '{dist_name}'. Available: {list(dists.keys())}")
 
-    cluster_defaults = config.get('cluster_defaults', {})
     dist_cfg = dists[dist_name]
-
-    # Start with cluster defaults
-    merged_cluster: Dict[str, Any] = dict(cluster_defaults)
-
-    # Normalize custom params (case-insensitive keys) ---------------------------------
+    # Normalize custom params (case-insensitive keys)
     norm_cp: Dict[str, Any] = {}
     if custom_params:
         for k, v in custom_params.items():
             norm_cp[k.lower()] = v
 
-    # Alias maps ----------------------------------------------------------------------
-    cluster_alias = {
+    # Alias map for all possible parameters
+    param_alias = {
+        'p_norm': 'p_norm', 'p0': 'p_norm', 'p_0': 'p_norm', 'p0norm': 'p_norm', 'p0_': 'p_norm', 'p\u000b0': 'p_norm',
+        'r_s': 'r_s', 'theta_s_deg': 'r_s', 'theta_s': 'r_s', 'theta_s_arcmin': 'r_s_arcmin',
+        'alpha': 'alpha', 'beta': 'beta', 'gamma': 'gamma',
+        'alpha_p': 'alpha_p', 'ap': 'alpha_p',
+        'concentration': 'concentration', 'c500': 'concentration',
         'ra': 'ra', 'dec': 'dec', 'z': 'redshift', 'redshift': 'redshift',
         'log10m': 'log10M', 'log10_m500': 'log10M', 'log10': 'log10M',
         'mass': 'mass', 'm500': 'mass', 'bias': 'bias',
         'e': 'e', 'ellipticity': 'e', 'angle': 'angle', 'offset': 'offset',
         'temperature': 'temperature', 'depth': 'depth'
     }
-    model_alias = {
-        'p_norm': 'p_norm', 'p0': 'p_norm', 'p_0': 'p_norm', 'p0norm': 'p_norm', 'p0_': 'p_norm', 'p\u2080': 'p_norm',
-        'r_s': 'r_s', 'theta_s_deg': 'r_s', 'theta_s': 'r_s', 'theta_s_arcmin': 'r_s_arcmin',
-        'alpha': 'alpha', 'beta': 'beta', 'gamma': 'gamma',
-        'alpha_p': 'alpha_p', 'ap': 'alpha_p',
-        'concentration': 'concentration', 'c500': 'concentration'
-    }
 
-    # Extract cluster-level from custom params
-    for k, v in norm_cp.items():
-        if k in cluster_alias:
-            merged_cluster[cluster_alias[k]] = v
-
-    # Explicit argument overrides (highest precedence for cluster-level)
-    if ra is not None: merged_cluster['ra'] = ra
-    if dec is not None: merged_cluster['dec'] = dec
-    if redshift is not None: merged_cluster['redshift'] = redshift
-    if log10M is not None: merged_cluster['log10M'] = float(log10M)
+    # Harmonize cluster-like parameters in a separate dict
+    harmonized: Dict[str, Any] = {}
+    # Explicit argument overrides
+    if ra is not None: harmonized['ra'] = ra
+    if dec is not None: harmonized['dec'] = dec
+    if redshift is not None: harmonized['redshift'] = redshift
+    if log10M is not None: harmonized['log10M'] = float(log10M)
     if mass is not None:
-        merged_cluster['mass'] = float(mass)
-        merged_cluster['log10M'] = np.log10(merged_cluster['mass'])
+        harmonized['mass'] = float(mass)
+        harmonized['log10M'] = np.log10(harmonized['mass'])
 
     # Harmonize mass / log10M
-    if merged_cluster.get('log10M') is not None:
-        merged_cluster['log10M'] = float(merged_cluster['log10M'])
-        merged_cluster['mass'] = 10.0 ** merged_cluster['log10M']
-    elif merged_cluster.get('mass') is not None:
-        merged_cluster['mass'] = float(merged_cluster['mass'])
-        merged_cluster['log10M'] = np.log10(merged_cluster['mass'])
+    if harmonized.get('log10M') is not None:
+        harmonized['log10M'] = float(harmonized['log10M'])
+        harmonized['mass'] = 10.0 ** harmonized['log10M']
+    elif harmonized.get('mass') is not None:
+        harmonized['mass'] = float(harmonized['mass'])
+        harmonized['log10M'] = np.log10(harmonized['mass'])
 
-    # Build base model + spectrum params from distribution ---------------------------
-    model_params = _build_model_parameters(dist_cfg, profgeom)
+    # Build base model + spectrum params from distribution
+    # Start from the raw YAML parameters so keys like 'ra','dec','mass','c500' exist
+    raw_params = dict(dist_cfg.get('parameters', {}))
+    model_params = dict(raw_params)
+    # Overlay canonical/derived model fields from builders
+    builder_params = _build_model_parameters(dist_cfg, profgeom)
+    model_params.update(builder_params)
     spectrum_params = _build_spectrum_parameters(dist_cfg)
 
-    # Merge cluster into model params
-    model_params.update(merged_cluster)
+    # Merge harmonized params into model_params only if key exists in YAML/model
+    for k, v in harmonized.items():
+        if k in model_params:
+            model_params[k] = v
+        # Also fill aliases if present
+        for alias, canonical in param_alias.items():
+            if k == canonical and alias in model_params:
+                model_params[alias] = v
 
-    # Apply model-level overrides from custom params ---------------------------------
+    # Apply custom params and aliasing only to model_params
     for k, v in norm_cp.items():
-        if k in model_alias:
-            mk = model_alias[k]
+        if k in param_alias:
+            mk = param_alias[k]
             # Special conversion for angular arcmin scale
-            if mk == 'r_s_arcmin':  # convert to degrees then store as r_s
+            if mk == 'r_s_arcmin':
                 try:
                     v = float(v) / 60.0
                 except Exception:
                     pass
                 mk = 'r_s'
-            if mk == 'concentration':
-                # Map to expected internal field names used by builders if present
-                model_params['concentration'] = v
-            else:
+            if mk in model_params:
                 model_params[mk] = v
+            # Also fill aliases if present
+            for alias, canonical in param_alias.items():
+                if mk == canonical and alias in model_params:
+                    model_params[alias] = v
+
+    # Validate required parameters based on distribution YAML: require params that have a non-null default
+    dist_params = dist_cfg.get('parameters', {})
+    required_keys = [k for k, v in dist_params.items() if v is not None]
+    missing = [k for k in required_keys if model_params.get(k, None) is None]
+    if missing:
+        raise ValueError(f"Missing required model parameters for {model_params.get('type', None)}: {missing}. Model dict: {model_params}")
 
     return {'model': model_params, 'spectrum': spectrum_params}
 

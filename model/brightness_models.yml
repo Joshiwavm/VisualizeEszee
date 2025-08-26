@@ -1,14 +1,3 @@
-cluster_defaults:
-  ra: 0.0
-  dec: 0.0
-  redshift: 1.0
-  mass: 1.0e14
-  bias: 0.0
-  e: 0.0
-  angle: 0.0
-  offset: 0.0
-  temperature: 0.0
-
 distributions:
   # McDonald+2014 (A10 form)
   m14_up:
@@ -16,12 +5,21 @@ distributions:
     model_type: A10Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 2.59
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 2.27
       beta: 3.48
       gamma: 0.15
       p_norm: 3.47
       alpha_p: -0.1
+      redshift: 1.0
+      bias: 0.0
       log10: null
       depth: null
 
@@ -30,12 +28,21 @@ distributions:
     model_type: A10Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 2.8
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 2.3
       beta: 3.34
       gamma: 0.21
       p_norm: 3.7
       alpha_p: -0.1
+      redshift: 1.0
+      bias: 0.0
       log10: null
       depth: null
 
@@ -44,12 +51,21 @@ distributions:
     model_type: A10Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 1.5
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.7
       beta: 5.74
       gamma: 0.05
       p_norm: 3.91
       alpha_p: -0.1
+      redshift: 1.0
+      bias: 0.0
       log10: null
       depth: null
 
@@ -59,12 +75,21 @@ distributions:
     model_type: A10Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 1.177
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.051
       beta: 5.4905
       gamma: 0.3081
       p_norm: 8.403
       alpha_p: 0.12
+      redshift: 1.0
+      bias: 0.0
       log10: null
       depth: null
 
@@ -73,12 +98,21 @@ distributions:
     model_type: A10Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 1.128
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.2223
       beta: 5.4905
       gamma: 0.7736
       p_norm: 3.249
       alpha_p: -0.1
+      redshift: 1.0
+      bias: 0.0
       log10: null
       depth: null
 
@@ -87,12 +121,21 @@ distributions:
     model_type: A10Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 1.083
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.4063
       beta: 5.4905
       gamma: 0.3798
       p_norm: 3.202
       alpha_p: -0.1
+      redshift: 1.0
+      bias: 0.0
       log10: null
       depth: null
 
@@ -102,12 +145,18 @@ distributions:
     function: gnfwProfile
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      p_norm: 8.403
+      r_s: 1.0
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.051
       beta: 5.4905
       gamma: 0.3081
-      p_norm: 8.403
-      r_s: 1.0
-      c500: null  # placeholder for compatibility
+      redshift: 1.0
 
   # Ghirardini+2017
   g17_ex:
@@ -115,7 +164,14 @@ distributions:
     model_type: G17Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 1.27
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.33
       beta0: 4.77
       beta1: 0.056
@@ -126,6 +182,8 @@ distributions:
       p_norm: 0.1716
       alpha_p: -0.051
       c_p: -0.321
+      redshift: 1.0
+      bias: 0.0
       log10M: null
 
   g17_st:
@@ -133,7 +191,14 @@ distributions:
     model_type: G17Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 1.21
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.23
       beta0: 5.06
       beta1: 0.0
@@ -144,6 +209,8 @@ distributions:
       p_norm: 0.1701
       alpha_p: 0.0105
       c_p: -0.121
+      redshift: 1.0
+      bias: 0.0
       log10M: null
 
   # Le Brun+2015
@@ -152,13 +219,22 @@ distributions:
     model_type: L15Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 0.986
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.489
       beta: 4.512
       gamma: 1.174
       delta: 0.072
       epsilon: 0.245
       p_norm: 0.694
+      redshift: 1.0
+      bias: 0.0
       log10M: null
 
   l15_80:
@@ -166,13 +242,22 @@ distributions:
     model_type: L15Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 0.892
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.517
       beta: 4.625
       gamma: 0.814
       delta: 0.263
       epsilon: 0.805
       p_norm: 0.791
+      redshift: 1.0
+      bias: 0.0
       log10M: null
 
   l15_85:
@@ -180,11 +265,20 @@ distributions:
     model_type: L15Pressure
     spectrum_type: tSZ
     parameters:
+      ra: 0.0
+      dec: 0.0
+      mass: 1.0e14
       c500: 0.597
+      e: 0.0
+      angle: 0.0
+      offset: 0.0
+      temperature: 0.0
       alpha: 1.572
       beta: 4.85
       gamma: 0.92
       delta: 0.246
       epsilon: 0.864
       p_norm: 0.235
+      redshift: 1.0
+      bias: 0.0
       log10M: null
