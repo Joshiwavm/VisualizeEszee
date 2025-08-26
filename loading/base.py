@@ -7,6 +7,8 @@ from a single base in other parts of the codebase.
 from __future__ import annotations
 
 from . import DataHandler, ModelHandler, LoadPickles, LoadPickles
+
+from ..utils.utils import extract_plane
 import os
 
 class Loader(DataHandler, ModelHandler, LoadPickles):
@@ -87,7 +89,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles):
         header = entry['header'].copy()
 
         # Recover Compton-y (remove PB attenuation)
-        y_map = self.__extract_plane(entry['model_data'])  # (y * PB)
+        y_map = extract_plane(entry['model_data'])  # (y * PB)
 
         # Write Compton-y FITS
         header_y = header.copy(); header_y['BUNIT'] = 'Compton-y'
