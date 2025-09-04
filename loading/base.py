@@ -50,24 +50,31 @@ class Loader(DataHandler, ModelHandler, LoadPickles):
                     self._save_match_outputs(model_name, data_name, field_key, spw_key, assoc, save_output)
         assoc['status'] = 'fourier_ready'
 
-    def match_model(self, model_name: str | None = None, data_name: str | None = None, *, 
-                    notes=None, save_output=None, calib: float = 1.0):
+    def match_model(self, model_name: str | None = None, data_name: str | None = None,
+                    calib_index: int | None = None, notes: str | None = None, 
+                    save_output: str | None = None):
+        
+        def is_interf(d):
+            return self.uvdata[d].get('metadata', {}).get('obstype','').lower() == 'interferometer'
+        
         model_list = list(self.models.keys()) if model_name is None else [model_name]
         if not model_list:
             raise ValueError("No models available to match.")
-        def is_interf(d):
-            return self.uvdata[d].get('metadata', {}).get('obstype','').lower() == 'interferometer'
-        if data_name is None:
-            data_list = [k for k in self.uvdata.keys() if is_interf(k)]
-        else:
-            if data_name not in self.uvdata:
-                raise ValueError(f"Data set '{data_name}' not found.")
-            data_list = [data_name] if is_interf(data_name) else []
-        if not data_list:
-            return
+        
+        if data_name is not None and data_name not in self.uvdata:
+            raise ValueError(f"Data set '{data_name}' not found.")
+        data_list = [k for k in self.uvdata.keys() if is_interf(k)] if data_name is None else ([data_name] if is_interf(data_name) else [])
+
         for m in model_list:
-            for d in data_list:
-                self._match_single(m, d, calib, notes=notes, save_output=save_output)
+            calib = self.models[m].get('calibration')
+            for id, d in enumerate(data_list):
+                if len(calib) != len(data_list) and calib_index is None:
+                    vcalib = 1
+                elif len(calib) != len(data_list) and calib_index is not None:
+                    vcalib = calib[calib_index]
+                else:
+                    vcalib = calib[id]
+                self._match_single(m, d, vcalib, notes=notes, save_output=save_output)
 
     # ------------------------------------------------------------------
     # Output writer helper

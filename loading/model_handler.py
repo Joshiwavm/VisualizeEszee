@@ -68,7 +68,7 @@ class ModelHandler:
                         'source': 'pickle',
                         'filename': filename,
                         'marginalized': True,
-                        'calibration': [None],  # default calibration
+                        'calibration': [],  # default calibration
 
                     }
 
