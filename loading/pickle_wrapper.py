@@ -57,9 +57,53 @@ class LoadPickles:
         quantile_array = self.read_quantiles(filename, quantiles)  # shape (n_params, n_quantiles)
         param_list     = self._read_fixedvalues()
         params         = self._build_param_dicts(quantile_array, param_list)
-        return params
+        calibs         = self._read_calibrations(quantile_array)
+        return params, calibs
 
     # ------------------------ building param dictionairy ------------------------
+    def _read_calibrations(
+        self,
+        quantile_array: Optional[np.ndarray] = None,
+    ) -> Sequence[Sequence[float]]:
+        """
+        Read measured calibration (scale) factors from the results structure.
+
+        We expect:
+        - `self.results['scales']` -> iterable of length N_scales (defaults = 1)
+        - `self.results['vary'][-1]['values']['vary']` -> boolean array length N_scales indicating which are fitted
+        - If scales are fitted, their fitted values are the last N_fitted rows of `quantile_array`.
+
+        Returns a list of length n_quants; each entry is a list of length N_scales with calibrations.
+        If no quantile_array is provided, returns a single-row list (defaults or fitted guesses if available).
+        """
+        scales = self.results['scales']
+        n_scales = len(scales)
+
+        # boolean array saying which scales were fitted
+        flags = np.asarray(self.results['vary'][-1]['values']['vary'], dtype=bool)
+        n_fitted = int(flags.sum())
+
+        # If no quantiles passed or no fitted scales -> return ones
+        if quantile_array is None or n_fitted == 0:
+            n_quants = 1 if quantile_array is None else quantile_array.shape[1]
+            return [[1.0] * n_scales for _ in range(n_quants)]
+
+        n_quants = quantile_array.shape[1]
+        calibs = np.ones((n_quants, n_scales), dtype=float)
+
+        last_rows = quantile_array[-n_fitted:, :]  # assume last rows correspond to fitted scales
+        true_indices = np.where(flags)[0]
+
+        # align length if necessary
+        min_len = min(len(true_indices), last_rows.shape[0])
+        true_indices = true_indices[-min_len:]
+        last_rows = last_rows[-min_len:, :]
+
+        for r_idx, scale_idx in enumerate(true_indices):
+            calibs[:, scale_idx] = last_rows[r_idx, :]
+
+        return calibs.tolist()
+
     def _build_param_dicts(
         self,
         quantile_array: np.ndarray,

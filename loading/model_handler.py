@@ -27,6 +27,7 @@ class ModelHandler:
                 'type': model_type,
                 'marginalized': False,
                 'parameters': parameters,
+                'calibration': [],  # default calibration
             }
 
         elif source_type == 'pickle':
@@ -44,7 +45,7 @@ class ModelHandler:
                 raise ValueError("Cannot specify both marginalized and quantiles")
             
             elif not marginalized:
-                parameters = self.get_parameters_from_quantiles(filename, quantiles)
+                parameters, calibs = self.get_parameters_from_quantiles(filename, quantiles)
 
                 n_quants = len(parameters)
                 n_compts = len(parameters[0]) if n_quants > 0 else 0
@@ -58,6 +59,7 @@ class ModelHandler:
                             'component': j_compt,
                             'marginalized': False,
                             'parameters': parameters[i_quant][j_compt],
+                            'calibration': calibs[i_quant],  # default calibration
                         }
             else:
                 quantiles = None
@@ -66,6 +68,8 @@ class ModelHandler:
                         'source': 'pickle',
                         'filename': filename,
                         'marginalized': True,
+                        'calibration': [None],  # default calibration
+
                     }
 
         else:
@@ -203,6 +207,10 @@ class ModelHandler:
         
         return r
 
+
+
+
+    # TODO:
     def _generate_point_source(self, parameters, ra_map, dec_map):
         """Generate point source model."""
         ra_center = parameters.get('ra', parameters.get('RA', 0.0))
