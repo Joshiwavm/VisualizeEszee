@@ -31,26 +31,16 @@ class Loader(DataHandler, ModelHandler, LoadPickles):
     # ------------------------------------------------------------------
     def _match_single(self, model_name: str, data_name: str, calib: float,
                       notes=None, save_output=None):
-        meta = self.uvdata[data_name].get('metadata', {})
-        if meta.get('obstype','').lower() != 'interferometer':
-            return None
-        model_info = self.models[model_name]
-
-        model_info[data_name] = {
-            'band': meta.get('band'),
-            'array': meta.get('array'),
-            'fields': meta.get('fields'),
-            'spws': meta.get('spws'),
-            'binvis': meta.get('binvis')
-        }
+        dmeta = self.uvdata[data_name].get('metadata', {})
+   
         # build maps for this pair
         maps = self.add_model_maps(model_name, dataset_name=data_name)
         assoc = self.matched_models.setdefault(model_name, {}).setdefault(data_name, {})
         assoc.update({'status': 'fourier_pending', 'notes': notes, 'maps': maps, 'sampled_model': {}})
         
         # Build Fourier products
-        fields = meta.get('fields', [])
-        spws_nested = meta.get('spws', [])
+        fields = dmeta.get('fields', [])
+        spws_nested = dmeta.get('spws', [])
         for f, field in enumerate(fields):
             field_key = f'field{field}'
             for spw in spws_nested[f]:

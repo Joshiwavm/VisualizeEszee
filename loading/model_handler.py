@@ -75,7 +75,7 @@ class ModelHandler:
         """Build model maps for model[name][dataset_name] (fields/spws level)."""
         
         model_info = self.models.get(name)
-        dmeta = model_info.get(dataset_name)
+        dmeta = self.uvdata[dataset_name].get('metadata')
         fields = dmeta.get('fields')
         spws_nested = dmeta.get('spws')
 
