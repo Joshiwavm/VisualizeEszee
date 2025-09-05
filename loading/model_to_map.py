@@ -111,7 +111,7 @@ class MapMaking:
         logz = np.asarray(self.results['samples']['logz'])
         raw_samples = np.asarray(self.results['samples']['samples'])
 
-        # Update model_info / self.models entry with metadata if missing
+        # Metadata (concise): populate basic type/spectrum once
         fixed_list = self._read_fixedvalues()
         model_type = fixed_list[0]['model'].get('type')
         spectrum_type = fixed_list[0]['spectrum'].get('type')
@@ -129,7 +129,7 @@ class MapMaking:
                 self.models[k]['parameters'] = model_info['parameters']
                 break
 
-        # Stable normalization of weights
+        # Normalize weights
         norm = scipy.special.logsumexp(logwt - logz[-1])
         weights = np.exp(logwt - norm - logz[-1])
 
@@ -137,19 +137,16 @@ class MapMaking:
         m = weights > 1e-4
         samples = raw_samples[m]
         weights = weights[m]
-        weights = weights / weights.sum()
+        weights /= weights.sum()
 
-        # Coordinate grids to JAX arrays
-        ra_j = jnp.asarray(ra_map)
-        dec_j = jnp.asarray(dec_map)
-
+        ra_j = jnp.asarray(ra_map); dec_j = jnp.asarray(dec_map)
         im = jnp.zeros(ra_j.shape, dtype=jnp.float32)
-        for sample, w in tqdm(zip(samples, weights), total=len(weights), desc='marginalizing (samples)'):
-            pds = self._build_param_dicts(sample.reshape(-1, 1), fixed_list)[0]
+
+        for sample, w in tqdm(zip(samples, weights), total=len(weights), desc='marginalizing'):
+            pds = self._build_param_dicts(sample.reshape(-1,1), fixed_list)[0]
             smap = jnp.zeros_like(im)
             for comp in pds:
-                comp_map_np = self.generate_model_from_parameters(comp['model']['type'], comp, ra_j, dec_j, header)
-                smap = smap + jnp.asarray(comp_map_np)
+                comp_map = jnp.asarray(self.generate_model_from_parameters(comp['model']['type'], comp, ra_j, dec_j, header))
+                smap = smap + comp_map
             im = im + float(w) * smap
-
         return np.array(im)

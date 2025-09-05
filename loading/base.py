@@ -12,7 +12,6 @@ from ..utils.utils import extract_plane
 import os
 from astropy.io import fits
 import numpy as np
-from tqdm import tqdm
 
 class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
     """Simple mixin that initialises DataHandler and ModelHandler.
@@ -52,8 +51,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
                     self._save_match_outputs(model_name, data_name, field_key, spw_key, assoc, save_output)
 
 
-                pbar.set_postfix(model=model_name, data=data_name, field=field, spw=spw)
-                pbar.update(1)
+                # progress reporting removed (tqdm stripped)
         assoc['status'] = 'fourier_ready'
 
     def match_model(self, model_name: str | None = None, data_name: str | None = None,
@@ -71,31 +69,16 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
             raise ValueError(f"Data set '{data_name}' not found.")
         data_list = [k for k in self.uvdata.keys() if is_interf(k)] if data_name is None else ([data_name] if is_interf(data_name) else [])
 
-        # Pre-compute total number of (field, spw) tasks for a unified progress bar
-        spw_tasks_per_data = {}
-        for d in data_list:
-            dmeta = self.uvdata[d].get('metadata', {})
-            fields = dmeta.get('fields', [])
-            spws_nested = dmeta.get('spws', [])
-            cnt = 0
-            for f, field in enumerate(fields):
-                if f < len(spws_nested):
-                    cnt += len(spws_nested[f])
-            spw_tasks_per_data[d] = cnt
-        total_tasks_single_pass = sum(spw_tasks_per_data.values())
-        total_tasks = total_tasks_single_pass * len(model_list)
-
-        with tqdm(total=total_tasks, desc='matching (fields*spws)', disable=total_tasks <= 1) as pbar:
-            for m in model_list:
-                calib = self.models[m].get('calibration')
-                for id, d in enumerate(data_list):
-                    if len(calib) != len(data_list) and calib_index is None:
-                        vcalib = 1
-                    elif len(calib) != len(data_list) and calib_index is not None:
-                        vcalib = calib[calib_index]
-                    else:
-                        vcalib = calib[id]
-                    self._match_single(m, d, vcalib, notes=notes, save_output=save_output, pbar=pbar)
+        for m in model_list:
+            calib = self.models[m].get('calibration')
+            for id, d in enumerate(data_list):
+                if len(calib) != len(data_list) and calib_index is None:
+                    vcalib = 1
+                elif len(calib) != len(data_list) and calib_index is not None:
+                    vcalib = calib[calib_index]
+                else:
+                    vcalib = calib[id]
+                self._match_single(m, d, vcalib, notes=notes, save_output=save_output, pbar=None)
 
     # ------------------------------------------------------------------
     # Output writer helper
