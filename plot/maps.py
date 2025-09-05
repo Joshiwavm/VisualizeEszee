@@ -174,7 +174,7 @@ class PlotMaps:
         # Collect arrays for all non-'input' panels (include 'deconvolved' here)
         amp_arrays = [arr for name, arr, unit in panels if name != 'input']
         if amp_arrays:
-            vmin = min(np.nanmin(a) for a in amp_arrays)
+            vmin = min(np.nanmin(a) for a in amp_arrays) * 0.9
             vmax = -vmin
         
         n = len(panels)

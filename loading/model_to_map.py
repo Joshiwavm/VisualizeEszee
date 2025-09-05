@@ -134,7 +134,7 @@ class MapMaking:
         weights = np.exp(logwt - norm - logz[-1])
 
         # Mask tiny weights
-        m = weights > 1e-5
+        m = weights > 1e-4
         samples = raw_samples[m]
         weights = weights[m]
         weights /= weights.sum()

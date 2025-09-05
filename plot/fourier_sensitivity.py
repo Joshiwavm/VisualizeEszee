@@ -118,7 +118,7 @@ class PlotFourierSensitivity:
         if 'linestyle' in axhline_kwargs:
             axhline_kwargs['ls'] = axhline_kwargs.pop('linestyle')
         if 'ls' not in axhline_kwargs:
-            axhline_kwargs['ls'] = '--'
+            axhline_kwargs['ls'] = ':'
         
         fig, ax = plt.subplots(constrained_layout=True)
         
@@ -138,11 +138,11 @@ class PlotFourierSensitivity:
                 if '150' in act_sensitivities[name] and not np.isnan(act_sensitivities[name]['150']):
                     ax.plot([0.2, arcsec_to_uvdist(1.4*60)], 
                            [act_sensitivities[name]['150']*1e6]*2, 
-                           label=f'ACT 150 GHz ({name})', c=f'C{color_offset+j*2}', ls='-', **plot_kwargs)
+                           label=f'ACT 150 GHz', c=f'C{color_offset+j*2}', ls='--', **plot_kwargs)
                 if '090' in act_sensitivities[name] and not np.isnan(act_sensitivities[name]['090']):
                     ax.plot([0.2, arcsec_to_uvdist(2.0*60)], 
                            [act_sensitivities[name]['090']*1e6]*2, 
-                           label=f'ACT 90 GHz ({name})', c=f'C{color_offset+j*2+1}', ls='-', **plot_kwargs)
+                           label=f'ACT 90 GHz', c=f'C{color_offset+j*2+1}', ls='--', **plot_kwargs)
 
         ax.text(0.03, 0.97, f'{self.target}', transform=ax.transAxes, fontsize=12,
                 verticalalignment='top', 

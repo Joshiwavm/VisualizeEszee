@@ -111,7 +111,7 @@ class PlotPressureProfiles:
             pressure_interp = np.interp(coord, rs_sample, profile, left=profile[0], right=profile[-1])
             pressure_phys = pressure_interp
 
-            label = f"{model_name} ({model_type})"
+            label = f"{model_name}"
             line = ax.loglog(r_kpc, pressure_phys, label=label, **plot_kwargs)
 
             if model_type == 'A10Pressure' and model_params.get('mass') is not None and model_params.get('redshift') is not None:
