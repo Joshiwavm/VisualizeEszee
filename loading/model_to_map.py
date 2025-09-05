@@ -17,6 +17,7 @@ from typing import Callable, Sequence, Any, Dict, List
 import numpy as np
 import scipy
 from tqdm import tqdm
+import os
 import jax
 import jax.numpy as jnp
 
@@ -95,51 +96,43 @@ class MapMaking:
         model_map = model_map * ysznorm
         return model_map
 
-    def generate_marginalized_model(self, model_info: Dict[str, Any], ra_map, dec_map, header):
-        """Weighted posterior average map for (possibly multi-component) model.
+    # -------------------------- Marganalize ---------------------------
+    def generate_marginalized_model(self, model_info: Dict[str, Any], ra_map, dec_map, header) -> np.ndarray: 
 
-        model_info must contain 'filename'. Model type(s) inferred from posterior file.
-        """
-        filename = model_info['filename']
+        self.results = np.load(model_info['filename'], allow_pickle=True)
 
-        def generate_map(param_dicts: Sequence[Dict[str, Any]]):
-            return np.sum([
-                self.generate_model_from_parameters(pd['model']['type'], pd, ra_map, dec_map, header)
-                for pd in param_dicts[0]
-            ], axis=0)
-        
-        return self._make_marginalized_map_internal(filename, generate_map, ra_map, dec_map)
+        logwt = np.asarray(self.results['samples']['logwt'])
+        logz = np.asarray(self.results['samples']['logz'])
+        raw_samples = np.asarray(self.results['samples']['samples'])
 
-    # -------------------------- Internal helpers ---------------------------
+        # Stable normalization of weights
+        norm = scipy.special.logsumexp(logwt - logz[-1])
+        weights = np.exp(logwt - norm - logz[-1])
 
-    def _make_marginalized_map_internal(self, filename: str, 
-                                        generate_map: Callable, ra_map: np.ndarray, dec_map: np.ndarray) -> np.ndarray:
-        
-        self.results = np.load(filename, allow_pickle=True)
-        samples = np.asarray(self.results['samples']['samples'])
-        weights = self.results['samples']['logwt'] - scipy.special.logsumexp(self.results['samples']['logwt'] - self.results['samples']['logz'][-1])
-        weights = np.exp(weights - self.results['samples']['logz'][-1])
-
-        m = weights > 0.000001
-        samples, weights = samples[m], weights[m]
+        # Mask tiny weights
+        m = weights > 1e-6
+        samples = raw_samples[m]
+        weights = weights[m]
         weights = weights / weights.sum()
 
-        acc = jnp.zeros(ra_map.shape, dtype=jnp.float32)
-        for sample_row, w in zip(samples, weights):
-            param_dicts = self._build_param_dicts_single_sample(sample_row)
-            sample_map = generate_map(param_dicts).astype(np.float32)
-            acc = acc + float(w) * jnp.asarray(sample_map)
+        # Convert coordinate grids to JAX arrays (no copy if already ndarray)
+        ra_j = jnp.asarray(ra_map)
+        dec_j = jnp.asarray(dec_map)
 
-        result = np.asarray(acc)
-        return result
-
-    def _build_param_dicts_single_sample(self, sample: np.ndarray) -> List[Dict[str, Any]]:
-        """Reconstruct per-component parameter dicts for one sample.
-
-        Inspired by LoadPickles._read_fixedvalues + _build_param_dicts logic to ensure
-        consistent handling of fixed vs varying parameters using YAML ordering.
-        """
         fixed_list = self._read_fixedvalues()
-        params = self._build_param_dicts(sample.reshape(-1,1), fixed_list)
-        self.test_params = params
-        return params
+
+        # Accumulator as JAX (float32 for astro precision)
+        im = jnp.zeros(ra_j.shape, dtype=jnp.float32)
+
+        for idx, (sample, w) in enumerate(tqdm(zip(samples, weights), total=len(weights), desc='marginalizing (samples)')):
+            pds = self._build_param_dicts(sample.reshape(-1,1), fixed_list)[0]
+
+            smap = jnp.zeros_like(im)
+            for comp in pds:
+                comp_map_np = self.generate_model_from_parameters(comp['model']['type'], comp, ra_j, dec_j, header)
+                comp_map = jnp.asarray(np.asarray(comp_map_np, dtype=float))
+                smap = smap + comp_map
+
+            im = im + float(w) * smap
+
+        return np.array(im)

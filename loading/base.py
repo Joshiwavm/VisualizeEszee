@@ -12,6 +12,7 @@ from ..utils.utils import extract_plane
 import os
 from astropy.io import fits
 import numpy as np
+from tqdm import tqdm
 
 class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
     """Simple mixin that initialises DataHandler and ModelHandler.
@@ -66,22 +67,26 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
             raise ValueError(f"Data set '{data_name}' not found.")
         data_list = [k for k in self.uvdata.keys() if is_interf(k)] if data_name is None else ([data_name] if is_interf(data_name) else [])
 
-        for m in model_list:
-            calib = self.models[m].get('calibration')
-            for id, d in enumerate(data_list):
-                if len(calib) != len(data_list) and calib_index is None:
-                    vcalib = 1
-                elif len(calib) != len(data_list) and calib_index is not None:
-                    vcalib = calib[calib_index]
-                else:
-                    vcalib = calib[id]
-                self._match_single(m, d, vcalib, notes=notes, save_output=save_output)
+        total_pairs = len(model_list) * len(data_list)
+        with tqdm(total=total_pairs, desc='matching (model,data)', disable=total_pairs <= 1) as pbar:
+            for m in model_list:
+                calib = self.models[m].get('calibration')
+                for id, d in enumerate(data_list):
+                    if len(calib) != len(data_list) and calib_index is None:
+                        vcalib = 1
+                    elif len(calib) != len(data_list) and calib_index is not None:
+                        vcalib = calib[calib_index]
+                    else:
+                        vcalib = calib[id]
+                    self._match_single(m, d, vcalib, notes=notes, save_output=save_output)
+                    pbar.set_postfix(model=m, data=d)
+                    pbar.update(1)
 
     # ------------------------------------------------------------------
     # Output writer helper
     # ------------------------------------------------------------------
     def _save_match_outputs(self, model_name, data_name, field_key, spw_key, assoc, save_output):
-        os.makedirs(save_output, exist_ok=True)  # ensure output root exists
+        os.makedirs(save_output, exist_ok=True, verbose=False)  # ensure output root exists
 
         # Map & vis entries
         entry = assoc['maps'][field_key][spw_key]
@@ -93,7 +98,6 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
 
         # Write Compton-y FITS
         header_y = header.copy(); header_y['BUNIT'] = 'Compton-y'
-        print(f"Writing Compton-y map to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_y.fits')}")
         fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_y.fits"), y_map.astype(np.float32), header=header_y, overwrite=True)
 
         # Build dirty images (model & residual) from visibilities
@@ -108,9 +112,10 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
         # Write dirty images (Jy/beam)
         header_dm = header.copy(); header_dm['BUNIT'] = 'Jy/beam'
         header_dr = header.copy(); header_dr['BUNIT'] = 'Jy/beam'
-
-        print(f"Writing dirty model to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits')}")
-        print(f"Writing dirty residual to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits')}")
+        if verbose:
+            print(f"Writing Compton-y map to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_y.fits')}")
+            print(f"Writing dirty model to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits')}")
+            print(f"Writing dirty residual to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits')}")
 
         fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits"), dirty_model.astype(np.float32), header=header_dm, overwrite=True)
         fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits"), dirty_resid.astype(np.float32), header=header_dr, overwrite=True)
