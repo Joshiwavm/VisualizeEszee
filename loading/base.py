@@ -6,14 +6,14 @@ from a single base in other parts of the codebase.
 """
 from __future__ import annotations
 
-from . import DataHandler, ModelHandler, LoadPickles, LoadPickles
+from . import DataHandler, ModelHandler, LoadPickles, LoadPickles, MapMaking
 
 from ..utils.utils import extract_plane
 import os
 from astropy.io import fits
 import numpy as np
 
-class Loader(DataHandler, ModelHandler, LoadPickles):
+class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
     """Simple mixin that initialises DataHandler and ModelHandler.
 
     Both `DataHandler` and `ModelHandler` in the project use explicit
@@ -25,6 +25,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles):
         DataHandler.__init__(self)
         ModelHandler.__init__(self)
         LoadPickles.__init__(self)
+        MapMaking.__init__(self)
 
     # ------------------------------------------------------------------
     # Matching: always (re)build Fourier products (no flags)

@@ -8,6 +8,8 @@ from ..utils import calculate_r500, ysznorm, cosmo
 
 from typing import Tuple, Sequence, Dict, Any, Optional
 
+## Marginalizer import removed (logic consolidated in MapMaking mixin)
+
 class ModelHandler:
     """Handles model creation and sky map generation."""
 
@@ -62,7 +64,6 @@ class ModelHandler:
                             'calibration': calibs[i_quant],  # default calibration
                         }
             else:
-                quantiles = None
 
                 self.models[name] = {
                         'source': 'pickle',
@@ -74,6 +75,7 @@ class ModelHandler:
 
         else:
             raise ValueError("Invalid source_type, must be 'parameters' or 'pickle'")
+
 
     def add_model_maps(self, name: str, dataset_name: str, **kwargs):
         """Build model maps for model[name][dataset_name] (fields/spws level)."""
@@ -87,7 +89,7 @@ class ModelHandler:
         for f, field in enumerate(fields):
             field_key = f'field{field}'
             maps.setdefault(field_key, {})
-            for spw in spws_nested[f]:
+            for sdx, spw in enumerate(spws_nested[f]):
                 spw_key = f'spw{spw}'
                 binvis = dmeta.get('binvis')
                 if binvis is not None:
@@ -108,12 +110,9 @@ class ModelHandler:
                 ra_map = -1 * X * np.abs(cdelt1) / np.cos(np.deg2rad(crval2)) + crval1
                 dec_map = Y * np.abs(cdelt2) + crval2
 
-                if not model_info['marginalized']:
-                    model_map = self._generate_model_from_parameters(
-                        model_info['type'], model_info['parameters'], ra_map, dec_map, header
-                    )
-                else:
-                    model_map = self._generate_marginalized_model(
+
+                if sdx == 0:
+                    model_map = self.get_map(
                         model_info, ra_map, dec_map, header
                     )
                 
@@ -121,10 +120,10 @@ class ModelHandler:
 
                 with fits.open(pbeam_file) as pbeam_hdul:
                     pbeam_data = pbeam_hdul[0].data
-                    model_map = model_map * pbeam_data
+                    model_map_corrected = model_map * pbeam_data
 
                 maps[field_key][spw_key] = {
-                    'model_data': model_map,
+                    'model_data': model_map_corrected,
                     'image_data': image_data,
                     'pbeam_data': pbeam_data,
                     'header': header,
@@ -132,80 +131,7 @@ class ModelHandler:
                 
         return maps
 
-    def _generate_model_from_parameters(self, model_type, parameters, ra_map, dec_map, header,
-                                        rs = np.append(0.0, np.logspace(-5, 5, 100))):
-        """Generate model map from direct parameters."""
-
-        xform = TransformInput(parameters['model'], model_type)
-        input_par = xform.run()
-
-        rs_sample = rs[1:] if model_type == 'gnfwPressure' else rs
-
-        if model_type == 'A10Pressure':
-            profile = a10Profile(rs_sample, 
-                                 input_par.get('offset'), 
-                                 input_par['amp'], 
-                                 input_par.get('major'), 
-                                 input_par.get('e'),
-                                 input_par['alpha'], 
-                                 input_par['beta'], 
-                                 input_par['gamma'],
-                                 input_par['ap'], 
-                                 input_par['c500'], 
-                                 input_par['mass'])
-        elif model_type == 'gnfwPressure':
-            profile = gnfwProfile(rs_sample, 
-                                  input_par.get('offset'), 
-                                  input_par['amp'], 
-                                  input_par.get('major'), 
-                                  input_par.get('e'),
-                                  input_par['alpha'], 
-                                  input_par['beta'], 
-                                  input_par['gamma'])
-        elif model_type == 'betaPressure':
-            profile = betaProfile(rs_sample, 
-                                  input_par.get('offset'), 
-                                  input_par['amp'], 
-                                  input_par.get('major'), 
-                                  input_par.get('e'), 
-                                  input_par['beta'])
-        
-        r_grid = self._make_radial_grid(ra_map, dec_map, parameters['model'])
-        
-        z = parameters['model'].get('redshift', parameters['model'].get('z'))
-        r_phys_mpc = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(z).to(u.Mpc).value
-        coord = r_phys_mpc / input_par.get('major')
-        
-        model_map = np.interp(coord, rs_sample, profile, left=profile[0], right=profile[-1])
-        model_map = model_map * ysznorm
-
-        return model_map
-
-    def _make_radial_grid(self, ra_map, dec_map, model_params):
-        """
-        Create radial distance grid from RA/Dec maps using model center and orientation.
-        This follows the Veszee approach for proper coordinate transformation.
-        """
-        
-        # Extract model center and orientation parameters
-        ra_center = model_params.get('ra')
-        dec_center = model_params.get('dec')
-        angle = model_params.get('angle', 0) 
-        eccentricity = model_params.get('e', 0)
-        
-        # Pre-compute trigonometric functions
-        cosy = np.cos(np.deg2rad(dec_center))
-        cost = np.cos(np.deg2rad(angle))
-        sint = np.sin(np.deg2rad(angle))
-        
-        # Transform to model-centered coordinate system
-        modgrid_x = (-(ra_map - ra_center) * cosy * sint - (dec_map - dec_center) * cost)
-        modgrid_y = ( (ra_map - ra_center) * cosy * cost - (dec_map - dec_center) * sint)
-        
-        # Calculate elliptical radial distance
-        r = np.sqrt(modgrid_x**2 + modgrid_y**2 / (1.0 - eccentricity)**2)
-        
-        return r
+    # Deprecated private generation helpers removed (delegated to MapMaking)
 
 
 
