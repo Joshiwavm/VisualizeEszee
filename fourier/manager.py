@@ -159,7 +159,7 @@ class FourierManager:
 
         # tSZ conversion path ------------------------------------------------------
         # Temperature extraction (optional) ---------------------------------------
-        Te = self.models[model_name]['parameters']['model']['temperature']
+        Te = self.models[model_name]['parameters']['model'].get('temperature', 0)
 
         osz = 4
         # Compute relativistic series coefficients (flat band; single freq treated as degenerate interval)

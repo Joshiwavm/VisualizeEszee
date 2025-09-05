@@ -64,7 +64,6 @@ class ModelHandler:
                             'calibration': calibs[i_quant],  # default calibration
                         }
             else:
-
                 self.models[name] = {
                         'source': 'pickle',
                         'filename': filename,

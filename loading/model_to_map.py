@@ -97,42 +97,59 @@ class MapMaking:
         return model_map
 
     # -------------------------- Marganalize ---------------------------
-    def generate_marginalized_model(self, model_info: Dict[str, Any], ra_map, dec_map, header) -> np.ndarray: 
+    def generate_marginalized_model(self, model_info: Dict[str, Any], ra_map, dec_map, header) -> np.ndarray:
+        """Compute marginalized (weighted) map and ensure model metadata populated.
 
+        For marginalized models we may lack per-component parameters; downstream code
+        still expects self.models[name]['type'] and ['parameters']['spectrum']['type'].
+        We harvest these from the fixed parameter list (vary structure) and update in place.
+        """
         self.results = np.load(model_info['filename'], allow_pickle=True)
 
+        # Extract weights & samples
         logwt = np.asarray(self.results['samples']['logwt'])
         logz = np.asarray(self.results['samples']['logz'])
         raw_samples = np.asarray(self.results['samples']['samples'])
+
+        # Update model_info / self.models entry with metadata if missing
+        fixed_list = self._read_fixedvalues()
+        model_type = fixed_list[0]['model'].get('type')
+        spectrum_type = fixed_list[0]['spectrum'].get('type')
+
+        # Ensure standardized parameters structure (empty model dict, spectrum type retained)
+        model_info['type'] = model_type
+        model_info.setdefault('parameters', {})
+        model_info['parameters']['model'] = model_info['parameters'].get('model', {})  # remain empty for marginalized aggregate
+        model_info['parameters']['spectrum'] = {'type': spectrum_type}
+
+        # Also reflect into self.models if we can find the key (search by identity)
+        for k, v in self.models.items():
+            if v is model_info:  # same dict object
+                self.models[k]['type'] = model_type
+                self.models[k]['parameters'] = model_info['parameters']
+                break
 
         # Stable normalization of weights
         norm = scipy.special.logsumexp(logwt - logz[-1])
         weights = np.exp(logwt - norm - logz[-1])
 
         # Mask tiny weights
-        m = weights > 1e-6
+        m = weights > 1e-4
         samples = raw_samples[m]
         weights = weights[m]
         weights = weights / weights.sum()
 
-        # Convert coordinate grids to JAX arrays (no copy if already ndarray)
+        # Coordinate grids to JAX arrays
         ra_j = jnp.asarray(ra_map)
         dec_j = jnp.asarray(dec_map)
 
-        fixed_list = self._read_fixedvalues()
-
-        # Accumulator as JAX (float32 for astro precision)
         im = jnp.zeros(ra_j.shape, dtype=jnp.float32)
-
-        for idx, (sample, w) in enumerate(tqdm(zip(samples, weights), total=len(weights), desc='marginalizing (samples)')):
-            pds = self._build_param_dicts(sample.reshape(-1,1), fixed_list)[0]
-
+        for sample, w in tqdm(zip(samples, weights), total=len(weights), desc='marginalizing (samples)'):
+            pds = self._build_param_dicts(sample.reshape(-1, 1), fixed_list)[0]
             smap = jnp.zeros_like(im)
             for comp in pds:
                 comp_map_np = self.generate_model_from_parameters(comp['model']['type'], comp, ra_j, dec_j, header)
-                comp_map = jnp.asarray(np.asarray(comp_map_np, dtype=float))
-                smap = smap + comp_map
-
+                smap = smap + jnp.asarray(comp_map_np)
             im = im + float(w) * smap
 
         return np.array(im)

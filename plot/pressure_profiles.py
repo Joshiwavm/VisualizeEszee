@@ -47,6 +47,8 @@ class PlotPressureProfiles:
         for model_name in model_names:
             model_info = self.models[model_name]
 
+            if self.models[model_name].get('marginalized'): continue
+
             model_params = model_info['parameters']['model']
             model_type = model_params.get('type')
     
