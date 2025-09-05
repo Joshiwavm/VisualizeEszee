@@ -32,7 +32,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
     # Matching: always (re)build Fourier products (no flags)
     # ------------------------------------------------------------------
     def _match_single(self, model_name: str, data_name: str, calib: float,
-                      notes=None, save_output=None):
+                      notes=None, save_output=None, pbar=None):
         dmeta = self.uvdata[data_name].get('metadata', {})
    
         # build maps for this pair
@@ -50,6 +50,10 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
                 self.map_to_vis(model_name, data_name, calib, field_key, spw_key)
                 if save_output is not None:
                     self._save_match_outputs(model_name, data_name, field_key, spw_key, assoc, save_output)
+
+
+                pbar.set_postfix(model=model_name, data=data_name, field=field, spw=spw)
+                pbar.update(1)
         assoc['status'] = 'fourier_ready'
 
     def match_model(self, model_name: str | None = None, data_name: str | None = None,
@@ -67,8 +71,21 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
             raise ValueError(f"Data set '{data_name}' not found.")
         data_list = [k for k in self.uvdata.keys() if is_interf(k)] if data_name is None else ([data_name] if is_interf(data_name) else [])
 
-        total_pairs = len(model_list) * len(data_list)
-        with tqdm(total=total_pairs, desc='matching (model,data)', disable=total_pairs <= 1) as pbar:
+        # Pre-compute total number of (field, spw) tasks for a unified progress bar
+        spw_tasks_per_data = {}
+        for d in data_list:
+            dmeta = self.uvdata[d].get('metadata', {})
+            fields = dmeta.get('fields', [])
+            spws_nested = dmeta.get('spws', [])
+            cnt = 0
+            for f, field in enumerate(fields):
+                if f < len(spws_nested):
+                    cnt += len(spws_nested[f])
+            spw_tasks_per_data[d] = cnt
+        total_tasks_single_pass = sum(spw_tasks_per_data.values())
+        total_tasks = total_tasks_single_pass * len(model_list)
+
+        with tqdm(total=total_tasks, desc='matching (fields*spws)', disable=total_tasks <= 1) as pbar:
             for m in model_list:
                 calib = self.models[m].get('calibration')
                 for id, d in enumerate(data_list):
@@ -78,9 +95,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
                         vcalib = calib[calib_index]
                     else:
                         vcalib = calib[id]
-                    self._match_single(m, d, vcalib, notes=notes, save_output=save_output)
-                    pbar.set_postfix(model=m, data=d)
-                    pbar.update(1)
+                    self._match_single(m, d, vcalib, notes=notes, save_output=save_output, pbar=pbar)
 
     # ------------------------------------------------------------------
     # Output writer helper
