@@ -15,9 +15,11 @@ Notes / Assumptions:
 
 from typing import Callable, Sequence, Any, Dict, List
 import numpy as np
+import scipy
 from tqdm import tqdm
 import jax
 import jax.numpy as jnp
+
 
 from ..model.unitwrapper import TransformInput
 from ..model.models import a10Profile, gnfwProfile, betaProfile
@@ -100,96 +102,44 @@ class MapMaking:
         """
         filename = model_info['filename']
 
-        def build_param_dicts(sample_row):
-            return self._build_param_dicts_single_sample(sample_row, self._posterior_meta)
-
         def generate_map(param_dicts: Sequence[Dict[str, Any]]):
             return np.sum([
                 self.generate_model_from_parameters(pd['model']['type'], pd, ra_map, dec_map, header)
-                for pd in param_dicts
+                for pd in param_dicts[0]
             ], axis=0)
-        return self._make_marginalized_map_internal(filename, build_param_dicts, generate_map, ra_map, dec_map)
+        
+        return self._make_marginalized_map_internal(filename, generate_map, ra_map, dec_map)
 
     # -------------------------- Internal helpers ---------------------------
-    def _extract_posterior_meta(self, results: Dict[str, Any]) -> Dict[str, Any]:
-        meta: Dict[str, Any] = {}
-        vary_components = results.get('vary', [])
-        if not vary_components:
-            raise ValueError("Posterior file missing 'vary' key for metadata")
-        meta['components_vary'] = vary_components[:-1]  # last assumed scales
-        meta['scales_vary'] = vary_components[-1]
-        meta['pars'] = results.get('pars')  # guesses & types
-        return meta
 
-    def _build_param_dicts_single_sample(self, sample: np.ndarray, meta: Dict[str, Any]) -> List[Dict[str, Any]]:
-        # Count fitted scale params (ignored)
-        scale_flags = np.asarray(meta['scales_vary']['values']['vary'], dtype=bool)
-        n_scale_fit = scale_flags.sum()
-        comp_vary_entries = meta['components_vary']
-        # Determine per-component variable counts
-        comp_var_counts = []
-        for comp_idx, c in enumerate(comp_vary_entries):
-            flags = np.asarray(c['values']['model']['vary'], dtype=bool)
-            comp_var_counts.append(flags.sum())
-        total_model_vars = sum(comp_var_counts)
-        # Truncate sample to exclude scales
-        sample_model = sample[:total_model_vars]
-        # Build dicts
-        out: List[Dict[str, Any]] = []
-        cursor = 0
-        for comp_idx, c in enumerate(comp_vary_entries):
-            flags = np.asarray(c['values']['model']['vary'], dtype=bool)
-            model_type = c['values']['model']['type']
-            # YAML order (LoadPickles provides this if mixed in; fallback sequential)
-            if hasattr(self, 'get_param_order_from_yaml'):
-                try:
-                    model_keys = list(getattr(self, 'get_param_order_from_yaml')(model_type))
-                except Exception:
-                    model_keys = [f'p{i}' for i in range(len(flags))]
-            else:
-                model_keys = [f'p{i}' for i in range(len(flags))]
-            # Guesses for fixed params
-            guesses = None
-            if meta['pars'] is not None:
-                try:
-                    guesses = meta['pars'][comp_idx]['model']['guess']
-                except Exception:
-                    guesses = None
-            model_dict: Dict[str, Any] = {'type': model_type}
-            for i, key in enumerate(model_keys):
-                if flags[i]:
-                    model_dict[key] = float(sample_model[cursor])
-                    cursor += 1
-                    if key == 'mass':  # undo log10 if convention used upstream
-                        model_dict[key] = 10 ** model_dict[key]
-                else:
-                    if guesses is not None and i < len(guesses):
-                        model_dict[key] = float(guesses[i])
-                    else:
-                        model_dict[key] = 0.0
-            out.append({'model': model_dict, 'spectrum': {'type': c['values']['spectrum']['type']}})
-        return out
-
-    def _make_marginalized_map_internal(self, filename: str, build_param_dicts: Callable,
+    def _make_marginalized_map_internal(self, filename: str, 
                                         generate_map: Callable, ra_map: np.ndarray, dec_map: np.ndarray) -> np.ndarray:
         
-        results = np.load(filename, allow_pickle=True).item()
-        samples = np.asarray(results['samples'])
-        weights = np.asarray(results['weights'])
-        m = weights > 0
+        self.results = np.load(filename, allow_pickle=True)
+        samples = np.asarray(self.results['samples']['samples'])
+        weights = self.results['samples']['logwt'] - scipy.special.logsumexp(self.results['samples']['logwt'] - self.results['samples']['logz'][-1])
+        weights = np.exp(weights - self.results['samples']['logz'][-1])
+
+        m = weights > 0.000001
         samples, weights = samples[m], weights[m]
         weights = weights / weights.sum()
-        self._posterior_meta = self._extract_posterior_meta(results)
+
         acc = jnp.zeros(ra_map.shape, dtype=jnp.float32)
         for sample_row, w in zip(samples, weights):
-            param_dicts = build_param_dicts(sample_row)
+            param_dicts = self._build_param_dicts_single_sample(sample_row)
             sample_map = generate_map(param_dicts).astype(np.float32)
             acc = acc + float(w) * jnp.asarray(sample_map)
+
         result = np.asarray(acc)
-        self._posterior_meta = None
         return result
 
-    # Placeholder init var (set during marginalized map generation)
-    _posterior_meta: Dict[str, Any] | None = None
+    def _build_param_dicts_single_sample(self, sample: np.ndarray) -> List[Dict[str, Any]]:
+        """Reconstruct per-component parameter dicts for one sample.
 
-
+        Inspired by LoadPickles._read_fixedvalues + _build_param_dicts logic to ensure
+        consistent handling of fixed vs varying parameters using YAML ordering.
+        """
+        fixed_list = self._read_fixedvalues()
+        params = self._build_param_dicts(sample.reshape(-1,1), fixed_list)
+        self.test_params = params
+        return params

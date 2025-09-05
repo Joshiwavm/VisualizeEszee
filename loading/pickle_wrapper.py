@@ -165,11 +165,5 @@ class LoadPickles:
 
             fixed.append(params)
 
-
-        # # Last entry: scaling parameters
-        # scaling = self.results['vary'][-1]['values']
-        # for i, scle in enumerate(scaling):
-        #     fixed[f'scale{i}'] = scle
-
         return fixed
 
