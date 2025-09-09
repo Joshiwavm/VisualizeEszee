@@ -31,12 +31,12 @@ class MapMaking:
     """Class for memory-efficient posterior map generation and marginalization."""
 
     # ------------------------------ Public API ------------------------------
-    def get_map(self, model_info: Dict[str, Any], ra_map, dec_map, header):
+    def get_map(self, model_info: Dict[str, Any], ra_map, dec_map, header, weight_0) -> np.ndarray:
         if not model_info.get('marginalized', False):
             return self.generate_model_from_parameters(
                 model_info['type'], model_info['parameters'], ra_map, dec_map, header
             )
-        return self.generate_marginalized_model(model_info, ra_map, dec_map, header)
+        return self.generate_marginalized_model(model_info, ra_map, dec_map, header, weight_0)
 
     @staticmethod
     def make_radial_grid(ra_map, dec_map, model_params):
@@ -97,7 +97,7 @@ class MapMaking:
         return model_map
 
     # -------------------------- Marganalize ---------------------------
-    def generate_marginalized_model(self, model_info: Dict[str, Any], ra_map, dec_map, header) -> np.ndarray:
+    def generate_marginalized_model(self, model_info: Dict[str, Any], ra_map, dec_map, header, weight_0) -> np.ndarray:
         """Compute marginalized (weighted) map and ensure model metadata populated.
 
         For marginalized models we may lack per-component parameters; downstream code
@@ -134,7 +134,7 @@ class MapMaking:
         weights = np.exp(logwt - norm - logz[-1])
 
         # Mask tiny weights
-        m = weights > 1e-4
+        m = weights > weight_0
         samples = raw_samples[m]
         weights = weights[m]
         weights /= weights.sum()

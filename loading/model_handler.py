@@ -76,7 +76,7 @@ class ModelHandler:
             raise ValueError("Invalid source_type, must be 'parameters' or 'pickle'")
 
 
-    def add_model_maps(self, name: str, dataset_name: str, **kwargs):
+    def add_model_maps(self, name: str, dataset_name: str, weight_0: float, **kwargs):
         """Build model maps for model[name][dataset_name] (fields/spws level)."""
         
         model_info = self.models.get(name)
@@ -112,7 +112,7 @@ class ModelHandler:
 
                 if sdx == 0:
                     model_map = self.get_map(
-                        model_info, ra_map, dec_map, header
+                        model_info, ra_map, dec_map, header, weight_0
                     )
                 
                 pbeam_file = fits_file.replace('.image.fits', '.pbeam.fits')

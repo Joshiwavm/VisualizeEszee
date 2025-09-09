@@ -31,11 +31,11 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
     # Matching: always (re)build Fourier products (no flags)
     # ------------------------------------------------------------------
     def _match_single(self, model_name: str, data_name: str, calib: float,
-                      notes=None, save_output=None, pbar=None):
+                      weight_0: float, notes=None, save_output=None, pbar=None):
         dmeta = self.uvdata[data_name].get('metadata', {})
    
         # build maps for this pair
-        maps = self.add_model_maps(model_name, dataset_name=data_name)
+        maps = self.add_model_maps(model_name, dataset_name=data_name, weight_0=weight_0)
         assoc = self.matched_models.setdefault(model_name, {}).setdefault(data_name, {})
         assoc.update({'status': 'fourier_pending', 'notes': notes, 'maps': maps, 'sampled_model': {}})
         
@@ -56,7 +56,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
 
     def match_model(self, model_name: str | None = None, data_name: str | None = None,
                     calib_index: int | None = None, notes: str | None = None, 
-                    save_output: str | None = None):
+                    save_output: str | None = None, weight_0: float = 1.0e-4):
         
         def is_interf(d):
             return self.uvdata[d].get('metadata', {}).get('obstype','').lower() == 'interferometer'
@@ -78,7 +78,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
                     vcalib = calib[calib_index]
                 else:
                     vcalib = calib[id]
-                self._match_single(m, d, vcalib, notes=notes, save_output=save_output, pbar=None)
+                self._match_single(m, d, vcalib, notes=notes, save_output=save_output, pbar=None, weight_0=weight_0)
 
     # ------------------------------------------------------------------
     # Output writer helper
