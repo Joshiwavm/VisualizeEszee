@@ -68,7 +68,6 @@ class Deconvolve:
         maps_entry = self.matched_models[model_name][best_dn]['maps'][best_field][best_spw]
         pb_arr = maps_entry['pbeam_data']
         pb = extract_plane(pb_arr)
-
         pb_safe = np.where(pb == 0.0, 1.0, pb)
 
         # Divide out PB so smoothing acts on intrinsic sky signal (Jy/pix)
@@ -85,6 +84,9 @@ class Deconvolve:
 
         # Smooth in Jy/beam and re-apply PB to get final smoothed Jy/beam image
         model_smoothed_beam = smooth(model_jybeam, sigma)
+
+        # Multiply by field weighted PB
+
         model_smoothed = model_smoothed_beam * pb
 
         # Build residual dirty image using sampled visibilities on the chosen grid
@@ -98,6 +100,8 @@ class Deconvolve:
                                        calib=1.0,
                                        align=True)
 
+        std = np.nanstd(resid)
+
         jvm_image = resid + model_smoothed
 
         # Store result under a concatenated data-name key so multi-dataset runs
@@ -105,12 +109,21 @@ class Deconvolve:
         concat_dn = "+".join(data_names)
         assoc = self.matched_models[model_name].setdefault(concat_dn, {})
         assoc['deconvolved'] = jvm_image.astype(np.float32)
+        assoc['std'] = np.nanstd(resid)
 
         if save_output is not None:
             os.makedirs(save_output, exist_ok=True)
-            h = header.copy(); h['BUNIT'] = 'Jy/beam'
+            h = header.copy(); h['BUNIT'] = 'Jy/beam'; h['HISTORY']='JvM-cleaned image'; h['rms']=(std, 'Jy/beam')
             fname = os.path.join(save_output, f"{model_name}_{concat_dn}_{best_field}_{best_spw}_JvM_clean.fits")
             print(f"Writing JvM-cleaned image to {fname}")
             fits.writeto(fname, jvm_image.astype(np.float32), header=h, overwrite=True)
 
         return jvm_image
+
+    def _likelihood_call(self):
+        """--- IGNORE ---"""
+        pass
+
+    def _get_field_averaged_pb(self):
+        """--- IGNORE ---"""
+        pass

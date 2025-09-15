@@ -241,7 +241,7 @@ class PlotRadialDistributions:
         ax.set_xlim(1e0,1e1)
 
         ax.set_ylabel('Imag(V) [mJy]')
-        ax.set_xlabel(r'uv distance [k$\lambda$]')
+        ax.set_xlabel(r'uv-distance [k$\lambda$]')
         ax.set_xscale('log')
 
         # Add target name if available (only once)
