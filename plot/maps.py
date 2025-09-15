@@ -59,7 +59,7 @@ class PlotMaps:
     def plot_map(self, model_name: str, data_name: str, types, *, field=None, spw=None,
                  cmap: str = 'RdBu_r', save_plots: bool = False, return_fig: bool = False,
                  output_dir: str = '../plots/maps/', use_style: bool = True,
-                 filename: Optional[str] = None,
+                 filename: Optional[str] = None, taper: float | None = None,
                  aspect: str = 'equal', **imshow_kwargs):
         
         """Plot one or multiple map types in a single row.
@@ -146,8 +146,8 @@ class PlotMaps:
                 plane_pb = extract_plane(entry['model_data'])  # ensure defined
                 npix = plane_pb.shape[0]
                 pix_deg = abs(header.get('CDELT1') or header.get('CD1_1'))
-                dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
-                dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
+                dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True, taper=taper)
+                dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True, taper=taper)
                 entry['dirty_model'] = dirty_model
                 entry['dirty_resid'] = dirty_resid
         

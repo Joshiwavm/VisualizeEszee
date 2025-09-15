@@ -31,34 +31,14 @@ class FourierManager:
 
     # ----------------- Spectral scaling (non-tSZ) ------------------------
     @staticmethod
-    def uvgaus(u: np.ndarray, v: np.ndarray, vis: np.ndarray, taper_arcsec: float) -> np.ndarray:
-        """Apply Gaussian taper to visibilities.
-        
-        Parameters
-        ----------
-        u, v : np.ndarray
-            UV coordinates in lambda
-        vis : np.ndarray
-            Complex visibilities
-        taper_arcsec : float
-            Angular scale for taper in arcseconds
-            
-        Returns
-        -------
-        np.ndarray
-            Tapered visibilities
-        """
-        # Convert arcsec to radians
-        taper_rad = np.deg2rad(taper_arcsec / 3600.0)
-        
-        # Calculate UV distance
-        uvdist = np.sqrt(u**2 + v**2)
-        
-        # Gaussian taper: exp(-0.5 * (uvdist * taper_rad)**2)
-        # This gives amplitude=1.0 at u,v=0 and falls off with UV distance
-        taper_factor = np.exp(-0.5 * (uvdist * taper_rad)**2)
-        
-        return vis * taper_factor
+    def uvgaus(u, v, vis, taper_arcsec, dra=0.0, ddec=0.0, e=0.0, theta=0.0):
+        sint, cost = np.sin(np.deg2rad(theta)), np.cos(np.deg2rad(theta))
+        scale = np.deg2rad(taper_arcsec / 3600.0)  # arcsec → rad
+        ur = np.pi * (-u * sint - v * cost) * scale
+        vr = np.pi * ( u * cost - v * sint) * scale * (1.0 - e)
+        taper = np.exp(-2.0 * (ur**2 + vr**2))
+        phase = np.exp(2.0j * np.pi * (u * dra + v * ddec))
+        return vis * taper * phase
 
     @staticmethod
     def _scale_powerlaw(spec: Dict[str, Any], freq: float) -> float:
