@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import numpy as np
+import warnings
 from astropy.io import fits
+from reproject import reproject_interp
 
 from VisualizeEszee.utils.utils import JyBeamToJyPix, smooth, extract_plane, get_map_beam_and_pix
 
@@ -85,9 +87,9 @@ class Deconvolve:
         # Smooth in Jy/beam and re-apply PB to get final smoothed Jy/beam image
         model_smoothed_beam = smooth(model_jybeam, sigma)
 
-        # Multiply by field weighted PB
-
-        model_smoothed = model_smoothed_beam * pb
+        # Multiply by the combined primary-beam map (use pb_combined for full multi-field response)
+        pb_combined = self._get_field_averaged_pb(model_name, data_names, best_dn, best_field, best_spw)
+        model_smoothed = model_smoothed_beam * pb_combined
 
         # Build residual dirty image using sampled visibilities on the chosen grid
         npix = model_smoothed.shape[0]
@@ -100,16 +102,15 @@ class Deconvolve:
                                        calib=1.0,
                                        align=True)
 
-        std = np.nanstd(resid)
-
         jvm_image = resid + model_smoothed
+        std = np.nanstd(resid)
 
         # Store result under a concatenated data-name key so multi-dataset runs
         # are discoverable by consumers (e.g. plot_map with data_name=[...])
         concat_dn = "+".join(data_names)
         assoc = self.matched_models[model_name].setdefault(concat_dn, {})
         assoc['deconvolved'] = jvm_image.astype(np.float32)
-        assoc['std'] = np.nanstd(resid)
+        assoc['std'] = std
 
         if save_output is not None:
             os.makedirs(save_output, exist_ok=True)
@@ -124,6 +125,38 @@ class Deconvolve:
         """--- IGNORE ---"""
         pass
 
-    def _get_field_averaged_pb(self):
-        """--- IGNORE ---"""
-        pass
+    def _get_field_averaged_pb(self, model_name: str, data_names: list, best_dn: str, best_field: str, best_spw: str):
+        """Build a combined primary-beam map for the provided model/data selection. """
+        # Locate the reference header / shape from best entry
+        ref_entry = self.matched_models[model_name][best_dn]['maps'][best_field][best_spw]
+        ref_header = ref_entry.get('header', None)
+        ref_plane = extract_plane(ref_entry.get('pbeam_data'))
+        ny, nx = np.asarray(ref_plane).shape
+
+        # Accumulators
+        acc_pb2 = np.zeros((ny, nx), dtype=np.float64)
+
+        # Iterate over datasets & fields
+        for dn in data_names:
+            maps_dn = self.matched_models[model_name].get(dn, {}).get('maps', {})
+            for fk, spw_dict in maps_dn.items():
+                # Use first spw key instead of best_spw
+                first_spw = next(iter(spw_dict))
+                entry = spw_dict[first_spw]
+                pb_arr = entry.get('pbeam_data')
+                src_header = entry.get('header', None)
+                
+                # Suppress FITS WCS warnings during reprojection
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=UserWarning, message='.*FITSFixedWarning.*')
+                    warnings.filterwarnings('ignore', module='astropy.wcs')
+                    reprojected, _ = reproject_interp((pb_arr, src_header), ref_header)
+                reprojected = np.nan_to_num(reprojected, nan=0.0, posinf=0.0, neginf=0.0)
+
+                # accumulate PB squared
+                pb_plane = extract_plane(reprojected)
+                acc_pb2 += pb_plane ** 2.0
+
+        # rescale to max of 1
+        pb_combined = acc_pb2/np.nanmax(acc_pb2)
+        return pb_combined
