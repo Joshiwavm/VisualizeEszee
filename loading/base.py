@@ -31,7 +31,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
     # Matching: always (re)build Fourier products (no flags)
     # ------------------------------------------------------------------
     def _match_single(self, model_name: str, data_name: str, calib: float,
-                      weight_0: float, notes=None, save_output=None, pbar=None):
+                      weight_0: float, notes=None, save_output=None, pbar=None, taper=None):
         dmeta = self.uvdata[data_name].get('metadata', {})
    
         # build maps for this pair
@@ -48,7 +48,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
                 spw_key = f'spw{spw}'
                 self.map_to_vis(model_name, data_name, calib, field_key, spw_key)
                 if save_output is not None:
-                    self._save_match_outputs(model_name, data_name, field_key, spw_key, assoc, save_output)
+                    self._save_match_outputs(model_name, data_name, field_key, spw_key, assoc, save_output, taper)
 
 
                 # progress reporting removed (tqdm stripped)
@@ -56,7 +56,8 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
 
     def match_model(self, model_name: str | None = None, data_name: str | None = None,
                     calib_index: int | None = None, notes: str | None = None, 
-                    save_output: str | None = None, weight_0: float = 1.0e-4):
+                    save_output: str | None = None, weight_0: float = 1.0e-4,
+                    taper = None):
         
         def is_interf(d):
             return self.uvdata[d].get('metadata', {}).get('obstype','').lower() == 'interferometer'
@@ -78,12 +79,12 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
                     vcalib = calib[calib_index]
                 else:
                     vcalib = calib[id]
-                self._match_single(m, d, vcalib, notes=notes, save_output=save_output, pbar=None, weight_0=weight_0)
+                self._match_single(m, d, vcalib, notes=notes, save_output=save_output, pbar=None, weight_0=weight_0, taper=taper)
 
     # ------------------------------------------------------------------
     # Output writer helper
     # ------------------------------------------------------------------
-    def _save_match_outputs(self, model_name, data_name, field_key, spw_key, assoc, save_output):
+    def _save_match_outputs(self, model_name, data_name, field_key, spw_key, assoc, save_output, taper):
         os.makedirs(save_output, exist_ok=True, verbose=False)  # ensure output root exists
 
         # Map & vis entries
@@ -104,8 +105,8 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
         model_vis = sm_entry['model_vis']; resid_vis = sm_entry['resid_vis']
         pix_deg = abs(header.get('CDELT1') or header.get('CD1_1'))
         npix = y_map.shape[0]
-        dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
-        dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True)
+        dirty_model = self.vis_to_image(u, v, model_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True, taper=taper)
+        dirty_resid = self.vis_to_image(u, v, resid_vis, weights=w, npix=npix, pixel_scale_deg=pix_deg, normalize=True, taper=taper)
 
         # Write dirty images (Jy/beam)
         header_dm = header.copy(); header_dm['BUNIT'] = 'Jy/beam'

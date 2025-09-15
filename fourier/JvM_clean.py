@@ -12,7 +12,7 @@ from VisualizeEszee.utils.utils import JyBeamToJyPix, smooth, extract_plane, get
 class Deconvolve:
     """Deconvolution helper that implements the JvM-style clean."""
 
-    def JvM_clean(self, model_name: str | None = None, data_name: str | None = None, *, notes=None, save_output=None):
+    def JvM_clean(self, model_name: str | None = None, data_name: str | None = None, taper:float|None=None, *, notes=None, save_output=None):
         """Perform the same Jansky/Beam combination previously living on Manager.
 
         Parameters match the old Manager.JvM_clean and the method operates
@@ -80,11 +80,15 @@ class Deconvolve:
         model_jybeam = model_jypix_nopb / factor
 
         # derive sigma (pixels) from geometric mean FWHM
-        fwhm_target_deg = np.sqrt(float(target_bmaj) * float(target_bmin))
-        fwhm_pix = fwhm_target_deg / ipix_deg
-        sigma = fwhm_pix / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-
         # Smooth in Jy/beam and re-apply PB to get final smoothed Jy/beam image
+        if taper is None:
+            fwhm_target_deg = np.sqrt(float(target_bmaj) * float(target_bmin))
+            fwhm_pix = fwhm_target_deg / ipix_deg
+            sigma = fwhm_pix / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        else:
+            fwhm_pix = taper/3600.0/ipix_deg
+            sigma = fwhm_pix / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+ 
         model_smoothed_beam = smooth(model_jybeam, sigma)
 
         # Multiply by the combined primary-beam map (use pb_combined for full multi-field response)
@@ -100,7 +104,8 @@ class Deconvolve:
                                        npix=npix,
                                        pixel_scale_deg=pixel_scale_deg,
                                        calib=1.0,
-                                       align=True)
+                                       align=True, 
+                                       taper=taper)
 
         jvm_image = resid + model_smoothed
         std = np.nanstd(resid)

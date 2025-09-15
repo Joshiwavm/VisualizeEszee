@@ -31,6 +31,36 @@ class FourierManager:
 
     # ----------------- Spectral scaling (non-tSZ) ------------------------
     @staticmethod
+    def uvgaus(u: np.ndarray, v: np.ndarray, vis: np.ndarray, taper_arcsec: float) -> np.ndarray:
+        """Apply Gaussian taper to visibilities.
+        
+        Parameters
+        ----------
+        u, v : np.ndarray
+            UV coordinates in lambda
+        vis : np.ndarray
+            Complex visibilities
+        taper_arcsec : float
+            Angular scale for taper in arcseconds
+            
+        Returns
+        -------
+        np.ndarray
+            Tapered visibilities
+        """
+        # Convert arcsec to radians
+        taper_rad = np.deg2rad(taper_arcsec / 3600.0)
+        
+        # Calculate UV distance
+        uvdist = np.sqrt(u**2 + v**2)
+        
+        # Gaussian taper: exp(-0.5 * (uvdist * taper_rad)**2)
+        # This gives amplitude=1.0 at u,v=0 and falls off with UV distance
+        taper_factor = np.exp(-0.5 * (uvdist * taper_rad)**2)
+        
+        return vis * taper_factor
+
+    @staticmethod
     def _scale_powerlaw(spec: Dict[str, Any], freq: float) -> float:
         ref = float(spec.get('nu0', freq) or freq)
         idx = float(spec.get('SpecIndex', spec.get('specindex', 0.0)))
@@ -225,15 +255,19 @@ class FourierManager:
                      weights: Optional[Sequence[float]] = None,
                      npix: int | None = None,
                      pixel_scale_deg: float | None = None,
-                     normalize: bool = True) -> np.ndarray:
+                     normalize: bool = True,
+                     taper: float | None = None) -> np.ndarray:
         """Dirty image reconstruction via NUFFT (requires jax + jax_finufft)."""
         u = np.asarray(u); v = np.asarray(v); vis = np.asarray(vis)
         delt_rad = np.deg2rad(abs(pixel_scale_deg))
         x = -2.0 * np.pi * v * delt_rad
         y =  2.0 * np.pi * u * delt_rad
         wsum = weights.sum()
-        if wsum == 0:
-            return np.zeros((npix, npix))
+
+        # Apply Gaussian taper if requested
+        if taper is not None:
+            vis = FourierManager.uvgaus(u, v, vis, taper)
+
         coeffs = weights * vis
         if normalize:
             coeffs = coeffs / wsum
@@ -241,7 +275,8 @@ class FourierManager:
         return np.array(grid.real)
 
     def _multivis_fields_to_image(self, fields: Sequence[Dict[str, Any]], npix: int, pixel_scale_deg: float,
-                                  align: bool = True, normalize: bool = True) -> np.ndarray:
+                                  align: bool = True, normalize: bool = True,
+                                  taper:float | None = None) -> np.ndarray:
         """Combine multiple fields (optionally phase-align) into a single dirty image.
 
         This is a low-level helper that accepts an iterable of field dicts with keys
@@ -264,7 +299,7 @@ class FourierManager:
         vis_all = np.concatenate(accum_vis); w_all = np.concatenate(accum_w)
         return FourierManager.vis_to_image(u_all, v_all, vis_all, weights=w_all,
                                            npix=npix, pixel_scale_deg=pixel_scale_deg,
-                                           normalize=normalize)
+                                           normalize=normalize, taper=taper)
 
     def multivis_to_image(self, model_name: str, data_name: str | Sequence[str],
                           use: str = 'data',
@@ -272,7 +307,8 @@ class FourierManager:
                           spws: Optional[Sequence[str]] = None,
                           npix: int = 1024, pixel_scale_deg: Optional[float] = None,
                           normalize: bool = True, calib: float = 1.0,
-                          align: bool = True) -> np.ndarray:
+                          align: bool = True,
+                          taper:float|None=None) -> np.ndarray:
         """Build a dirty image from already-sampled visibilities for a model/data pair.
 
         Parameters
@@ -308,17 +344,6 @@ class FourierManager:
         for dn in data_names:
             if dn not in self.matched_models[model_name]:
                 raise ValueError(f"Data '{dn}' not found for model '{model_name}'")
-
-        # Ensure sampled_model exists for each dataset; if not, call sample_fft for each map entry
-        for dn in data_names:
-            mm_entry = self.matched_models[model_name][dn]
-            sampled = mm_entry.get('sampled_model', {})
-            if not sampled:
-                maps = mm_entry.get('maps', {})
-                for field_key, spw_dict in maps.items():
-                    for spw_key in spw_dict.keys():
-                        # populate sampled_model entries using provided calib
-                        self.sample_fft(model_name, dn, calib, field_key, spw_key)
 
         # Build list of field dicts for the low-level helper across datasets
         field_dicts = []
@@ -393,8 +418,6 @@ class FourierManager:
                                 np.cos(np.deg2rad(0.5 * (central_phase[1] + field_phase[1])))
                         dDec = np.deg2rad(central_phase[1] - field_phase[1])
 
-
-
                         fd['dRA'] = dRA
                         fd['dDec'] = dDec
 
@@ -407,7 +430,8 @@ class FourierManager:
         # Call the low-level helper to build the image
         image = self._multivis_fields_to_image(field_dicts, npix=npix,
                                                 pixel_scale_deg=pixel_scale_deg,
-                                                align=align, normalize=normalize)
+                                                align=align, normalize=normalize, 
+                                                taper=taper)
         return image
 
     # ------------------------------------------------------------------
@@ -432,11 +456,12 @@ class FourierManager:
         # fft map 
         uv_entry = self.fft_map(model_name, data_name, field_key, spw_key)
         model_vis = self.sample_uv(uv_entry['uv'], u, v, uv_entry['du'])
-
+        model_vis *= calib
+        
         # compute residuals
         data_vis = real + 1j * imag
-        resid_vis = data_vis - model_vis * calib
-
+        resid_vis = data_vis - model_vis
+        
         # store sampled model
         sm_store = self.matched_models[model_name][data_name].setdefault('sampled_model', {})
         sm_store.setdefault(field_key, {})[spw_key] = {
@@ -450,7 +475,7 @@ class FourierManager:
         }
         return model_vis
 
-    def map_to_vis(self, model_name, data_name, calib, field_key, spw_key):
+    def map_to_vis(self, model_name, data_name, calib, field_key, spw_key) -> Tuple[np.ndarray, np.ndarray]:
         """Convenience wrapper returning (model_vis, resid_vis)."""
         self.sample_fft(model_name, data_name, calib, field_key, spw_key)
         entry = self.matched_models[model_name][data_name]['sampled_model'][field_key][spw_key]
