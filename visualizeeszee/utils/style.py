@@ -22,7 +22,7 @@ def load_thesis_style():
         if style_path.exists():
             # Try to use the style
             plt.style.use(str(style_path))
-            print(f"✓ Loaded custom style: {style_path}")
+            print(f"Loaded custom style: {style_path}")
             return True
         else:
             print(f"Style file not found: {style_path}")
@@ -50,7 +50,7 @@ def apply_publication_defaults():
             'savefig.dpi': 300,
             'savefig.bbox': 'tight'
         })
-        print("✓ Applied publication-ready default styling")
+        print("Applied publication-ready default styling")
         return True
     except Exception as e:
         print(f"Warning: Could not apply default styling: {e}")

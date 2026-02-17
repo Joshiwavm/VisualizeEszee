@@ -6,7 +6,7 @@ import warnings
 from astropy.io import fits
 from reproject import reproject_interp
 
-from VisualizeEszee.utils.utils import JyBeamToJyPix, smooth, extract_plane, get_map_beam_and_pix
+from ..utils.utils import JyBeamToJyPix, smooth, extract_plane, get_map_beam_and_pix
 
 
 class Deconvolve:

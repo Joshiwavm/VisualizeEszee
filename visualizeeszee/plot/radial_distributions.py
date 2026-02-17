@@ -30,11 +30,13 @@ class PlotRadialDistributions:
             Binned real, real errors, imaginary, imaginary errors, bin edges, bin centers
         """
         # Determine phase center to use
+        central_field = self._find_central_field(band_name)
         if custom_phase_center is not None:
-            central_phase_center = custom_phase_center
+            # Flatten list/array elements to scalars (take first if multi-component)
+            ra_c  = float(np.atleast_1d(custom_phase_center[0])[0])
+            dec_c = float(np.atleast_1d(custom_phase_center[1])[0])
+            central_phase_center = (ra_c, dec_c)
         else:
-            # Find central field
-            central_field = self._find_central_field(band_name)
             print(f"Using central field: {central_field}")
             central_phase_center = self.uvdata[band_name][central_field]['phase_center']
         
@@ -44,7 +46,6 @@ class PlotRadialDistributions:
         all_uvdist = []
         all_uvwghts = []
 
-        central_field = self._find_central_field(band_name)
         field_data = self.uvdata[band_name][central_field]
 
         # Calculate phase shift needed to move this field to the chosen central phase center
@@ -117,9 +118,6 @@ class PlotRadialDistributions:
             central_phase_center_models = self.uvdata[data_name][field_key]['phase_center']
 
         # dRA/dDec in radians (difference central - field)
-
-        print(model_name, data_name, central_phase_center_models, field_phase_center)
-
         dRA_rad = np.deg2rad(central_phase_center_models[0] - field_phase_center[0]) *\
                   np.cos(np.deg2rad(0.5 * (central_phase_center_models[1] + field_phase_center[1])))
         dDec_rad = np.deg2rad(central_phase_center_models[1] - field_phase_center[1])
@@ -292,8 +290,8 @@ class PlotRadialDistributions:
             raise ValueError("nbins must be an integer or a list of integers")
 
         fig, axes = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [4, 1], 'hspace': 0.0})
-        fig.set_figwidth(8)
-        fig.set_figheight(6)
+        fig.set_figwidth(5.5)
+        fig.set_figheight(5.5)
 
         # Data plotting -------------------------------------------------
         color_idx = 0
@@ -346,8 +344,8 @@ class PlotRadialDistributions:
                         custom_phase_center=custom_phase_center
                     )
 
-                    axes[0].plot(k_vals, real_line * 1e3, lw=2.0, ls=model_linestyles_map[mname], c=dataset_color, label='__nolegend__')
-                    axes[1].plot(k_vals, imag_line * 1e3, lw=2.0, ls=model_linestyles_map[mname], c=dataset_color, label='__nolegend__')
+                    axes[0].plot(k_vals, real_line * 1e3, lw=1.5, ls=model_linestyles_map[mname], c=dataset_color, label='__nolegend__')
+                    axes[1].plot(k_vals, imag_line * 1e3, lw=1.5, ls=model_linestyles_map[mname], c=dataset_color, label='__nolegend__')
         else:
             if model_name is not None:
                 print("Model plotting requested but required attributes (matched_models, fft_map, sample_uv) missing.")
@@ -363,7 +361,7 @@ class PlotRadialDistributions:
                                             markeredgecolor=color, color=color, label=dn))
             leg_data = axes[0].legend(proxy_handles, data_labels, frameon=False, loc='lower right', fontsize=9, title='Data')
             if model_linestyles_map:
-                model_legend_handles = [Line2D([0], [0], color='black', lw=2.0, linestyle=ls, label=mn)
+                model_legend_handles = [Line2D([0], [0], color='black', lw=1.5, linestyle=ls, label=mn)
                                         for mn, ls in model_linestyles_map.items()]
                 leg_models = axes[0].legend(model_legend_handles,
                                             [h.get_label() for h in model_legend_handles],

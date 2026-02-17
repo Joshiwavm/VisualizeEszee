@@ -159,17 +159,21 @@ class FourierManager:
         _, _, ipix_deg, jpix_deg = get_map_beam_and_pix(header)
 
         # Spectrum type (standardized structure) ----------------------------------
-        spec_type = self.models[model_name]['parameters']['spectrum']['type']
+        # For multi-component models, parameters is a list — use first component
+        params = self.models[model_name]['parameters']
+        if isinstance(params, list):
+            params = params[0]
+        spec_type = params['spectrum']['type']
         tsz_bool = isinstance(spec_type, str) and spec_type.lower() == 'tsz'
 
         if not tsz_bool:
-            spec = self.models[model_name]['parameters']['spectrum']
+            spec = params['spectrum']
             scale = self._spectral_scale(spec, freq)
             return model_plane * scale, ipix_deg
 
         # tSZ conversion path ------------------------------------------------------
         # Temperature extraction (optional) ---------------------------------------
-        Te = self.models[model_name]['parameters']['model'].get('temperature', 0)
+        Te = params['model'].get('temperature', 0)
 
         osz = 4
         # Compute relativistic series coefficients (flat band; single freq treated as degenerate interval)
@@ -460,3 +464,103 @@ class FourierManager:
         self.sample_fft(model_name, data_name, calib, field_key, spw_key)
         entry = self.matched_models[model_name][data_name]['sampled_model'][field_key][spw_key]
         return entry['model_vis'], entry['resid_vis']
+
+    # ------------------------------------------------------------------
+    # Point-source UV subtraction
+    # ------------------------------------------------------------------
+    @staticmethod
+    def compute_point_source_vis(u: np.ndarray, v: np.ndarray, freq: np.ndarray,
+                                 ra_ps: float, dec_ps: float,
+                                 amplitude: float, offset: float,
+                                 spec_index: float,
+                                 crval1: float, crval2: float,
+                                 ref_freq: float = 1e11) -> np.ndarray:
+        """Compute analytical visibility contribution of a point source.
+
+        Matches the Veszee FT._uvpoint convention::
+
+            vis = offset + amplitude * (freq/ref_freq)^spec_index
+                  * exp(2πi (u·dRA + v·dDec))
+
+        The point-source amplitudes from the pickle are apparent fluxes
+        (as fitted in the UV plane), so no additional primary-beam
+        correction is applied here.
+
+        Parameters
+        ----------
+        u, v : array
+            UV coordinates in wavelengths (same units as stored UVData).
+        freq : array
+            Per-visibility frequency in Hz (uvfreq from UVData).
+        ra_ps, dec_ps : float
+            Point-source position in degrees.
+        amplitude : float
+            Apparent flux density at ref_freq in Jy.
+        offset : float
+            Constant visibility offset (usually 0).
+        spec_index : float
+            Spectral index α  (S ∝ ν^α).
+        crval1, crval2 : float
+            Field phase-centre (RA, Dec) in degrees.
+        ref_freq : float
+            Reference frequency in Hz (default 100 GHz, matching Veszee).
+
+        Returns
+        -------
+        vis : complex ndarray
+        """
+        dRA  = np.deg2rad(ra_ps  - crval1) * np.cos(np.deg2rad(crval2))
+        dDec = np.deg2rad(dec_ps - crval2)
+        spec_scale = (np.asarray(freq) / ref_freq) ** spec_index
+        return offset + amplitude * spec_scale * np.exp(2j * np.pi * (u * dRA + v * dDec))
+
+    def apply_point_source_correction(self, model_name: str, data_name: str,
+                                      ps_list: list) -> None:
+        """Subtract point-source contributions from residual visibilities.
+
+        Call this *after* match_model() to remove frozen point-source
+        components from the residuals so that JvM_clean() and plot_map()
+        show SZ-only residuals.
+
+        Applied in-place to 'resid_vis' in
+        ``self.matched_models[model_name][data_name]['sampled_model']``
+        for every field/spw pair.
+
+        Parameters
+        ----------
+        model_name : str
+            Key in self.matched_models.
+        data_name : str
+            Key in self.matched_models[model_name].
+        ps_list : list of dict
+            Output of get_point_sources_from_pickle().
+        """
+        if not ps_list:
+            return
+
+        sm = self.matched_models[model_name][data_name].get('sampled_model', {})
+
+        for field_key, spw_map in sm.items():
+            for spw_key, entry in spw_map.items():
+                u    = entry['u']
+                v    = entry['v']
+                freq = entry['uvfreq']
+
+                # Phase centre for this field
+                pc = self.uvdata[data_name].get(field_key, {}).get('phase_center', (0.0, 0.0))
+                crval1, crval2 = float(pc[0]), float(pc[1])
+
+                # Accumulate total PS contribution for this field/spw
+                ps_vis_total = np.zeros(len(u), dtype=np.complex128)
+                for ps in ps_list:
+                    ps_vis_total += self.compute_point_source_vis(
+                        u, v, freq,
+                        ra_ps=ps['ra'], dec_ps=ps['dec'],
+                        amplitude=ps['amplitude'], offset=ps['offset'],
+                        spec_index=ps['spec_index'],
+                        crval1=crval1, crval2=crval2,
+                        ref_freq=ps.get('ref_freq', 1e11),
+                    )
+
+                # resid_vis = data_vis - sz_model_vis - ps_vis
+                entry['resid_vis'] = entry['resid_vis'] - ps_vis_total

@@ -1,6 +1,4 @@
 import numpy as np
-np.seterr(divide='ignore', invalid='ignore')
-
 from astropy import constants as const
 from astropy import units as u
 from astropy.convolution import convolve_fft, Gaussian2DKernel
@@ -142,31 +140,15 @@ def ytszRelativ(freq, order=1):
         return np.divide(Y4, Y0)
 
 
-def ytszCorrect(y, Te=0.0, limsize=np.inf):
-    """Apply relativistic correction series to y-coefficients.
+def ytszCorrect(y, Te=0.0):
+    """Apply relativistic correction to y-coefficients via Horner's method.
 
-    This retains the original behavior: if Te looks like an array and is
-    large enough it will attempt a vectorized evaluation. Otherwise a
-    simple polynomial accumulation is performed.
+    Evaluates the polynomial y[0] + y[1]*t + y[2]*t^2 + ... where t = Te/mec2
+    using Horner's scheme, which is numerically stable and works for scalar
+    or array Te.
     """
-    # Note: original code referenced `ne` (numexpr) but it wasn't imported.
-    # Keep a safe scalar fallback path and a simple vectorized path.
-    if hasattr(Te, '__len__') and (hasattr(Te, 'size') and Te.size >= limsize):
-        # If numexpr is desired, add it later; here return a simple evaluation
-        # matching the previous polynomial series expansion behavior.
-        y = np.asarray(y)
-        t = Te / mec2
-        if y.ndim == 0:
-            return np.full(np.shape(Te), y)
-        if y.ndim == 1:
-            return y[0] + y[1] * t
-        if y.ndim == 2:
-            return y[0] + y[1] * t + y[2] * (t ** 2)
-        # For higher dims, fallback to the scalar loop below per-pixel
-
-    # scalar / fallback path
-    ycorr = 0.0
     yarr = np.atleast_1d(y)
+    ycorr = 0.0
     for i in range(len(yarr) - 1, 0, -1):
         ycorr = (yarr[i] + ycorr) * Te / mec2
     return ycorr + yarr[0]
@@ -216,7 +198,7 @@ def get_map_beam_and_pix(header):
 
 def circle_mask(im, xc, yc, rcirc):
     ny, nx = im.shape
-    y, x = np.mgrid[0:nx, 0:ny]
+    y, x = np.mgrid[0:ny, 0:nx]
     r = np.sqrt((x - xc) * (x - xc) + (y - yc) * (y - yc))
     return (r < rcirc)
 

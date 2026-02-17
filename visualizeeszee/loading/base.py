@@ -6,7 +6,7 @@ from a single base in other parts of the codebase.
 """
 from __future__ import annotations
 
-from . import DataHandler, ModelHandler, LoadPickles, LoadPickles, MapMaking
+from . import DataHandler, ModelHandler, LoadPickles, MapMaking
 
 from ..utils.utils import extract_plane
 import os
@@ -85,7 +85,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
     # Output writer helper
     # ------------------------------------------------------------------
     def _save_match_outputs(self, model_name, data_name, field_key, spw_key, assoc, save_output, taper):
-        os.makedirs(save_output, exist_ok=True, verbose=False)  # ensure output root exists
+        os.makedirs(save_output, exist_ok=True)
 
         # Map & vis entries
         entry = assoc['maps'][field_key][spw_key]
@@ -111,10 +111,7 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
         # Write dirty images (Jy/beam)
         header_dm = header.copy(); header_dm['BUNIT'] = 'Jy/beam'
         header_dr = header.copy(); header_dr['BUNIT'] = 'Jy/beam'
-        if verbose:
-            print(f"Writing Compton-y map to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_y.fits')}")
-            print(f"Writing dirty model to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits')}")
-            print(f"Writing dirty residual to {os.path.join(save_output, f'{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits')}")
+        print(f"Writing {model_name}_{data_name}_{field_key}_{spw_key} to {save_output}")
 
         fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits"), dirty_model.astype(np.float32), header=header_dm, overwrite=True)
         fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits"), dirty_resid.astype(np.float32), header=header_dr, overwrite=True)

@@ -37,13 +37,29 @@ def get_models(dist_name: str, profgeom: str = 'sph',
                ra: Optional[float] = None, dec: Optional[float] = None,
                redshift: Optional[float] = None, mass: Optional[float] = None,
                log10M: Optional[float] = None,
-               custom_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-
+               custom_params: Optional[Dict[str, Any]] = None):
     """Return merged model + spectrum parameter dictionaries for a distribution.
     Precedence (highest last): cluster_defaults < distribution params < custom_params < explicit args.
     Mass handling: log10M authoritative; derive other if only one given.
     custom_params may include both cluster-level (ra, dec, redshift, mass, etc.) and model-level (p_norm, r_s, alpha, ...).
+
+    If any value in custom_params is a list, the function returns a list of dicts (one per
+    component) by splitting list values per index. Scalar values are broadcast to all components.
     """
+    # Multi-component shortcut: any list value triggers per-component expansion
+    if custom_params:
+        list_vals = {k: v for k, v in custom_params.items() if isinstance(v, list)}
+        if list_vals:
+            n = len(next(iter(list_vals.values())))
+            if any(len(v) != n for v in list_vals.values()):
+                raise ValueError("All list values in custom_params must have the same length")
+            return [
+                get_models(dist_name, profgeom=profgeom, ra=ra, dec=dec,
+                           redshift=redshift, mass=mass, log10M=log10M,
+                           custom_params={k: (v[i] if isinstance(v, list) else v)
+                                          for k, v in custom_params.items()})
+                for i in range(n)
+            ]
     config = load_brightness_models()
     dists = config.get('distributions', {})
     if dist_name not in dists:

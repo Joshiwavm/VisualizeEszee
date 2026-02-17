@@ -12,7 +12,7 @@ class PlotFourierSensitivity:
     """
     A class for visualizing Fourier mode sensitivity of ALMA AND ACT DATA
     """
-    def __getWeightDistribution(self, name, bins=np.logspace(np.log10(0.1), np.log10(150), 31)):
+    def _getWeightDistribution(self, name, bins=np.logspace(np.log10(0.1), np.log10(150), 31)):
         """
         Returns binned sensitivity for a given uvdata set name.
         """
@@ -59,32 +59,16 @@ class PlotFourierSensitivity:
         
         for name in self.actdata:
             act_sensitivities[name] = {}
-            
-            # Compute 90 GHz sensitivity
-            if '090' in self.actdata[name]:
-                stds_090 = []
-                for pa in self.actdata[name]['090']:
-                    std = self.actdata[name]['090'][pa].std
-                    if std > 0:
-                        stds_090.append(std)
-                
-                if stds_090:  # Only compute if we have valid data
-                    act_sensitivities[name]['090'] = np.sqrt(1 / np.nansum([1/s**2 for s in stds_090]))
-                else:
-                    act_sensitivities[name]['090'] = np.nan
-            
-            # Compute 150 GHz sensitivity
-            if '150' in self.actdata[name]:
-                stds_150 = []
-                for pa in self.actdata[name]['150']:
-                    std = self.actdata[name]['150'][pa].std
-                    if std > 0:
-                        stds_150.append(std)
-                
-                if stds_150:  # Only compute if we have valid data
-                    act_sensitivities[name]['150'] = np.sqrt(1 / np.nansum([1/s**2 for s in stds_150]))
-                else:
-                    act_sensitivities[name]['150'] = np.nan
+
+            for band in ('090', '150'):
+                if band not in self.actdata[name]:
+                    continue
+                stds = np.array([self.actdata[name][band][pa].std
+                                 for pa in self.actdata[name][band]])
+                stds = stds[stds > 0]
+                act_sensitivities[name][band] = (
+                    np.sqrt(1.0 / np.nansum(1.0 / stds**2)) if stds.size > 0 else np.nan
+                )
         
         return act_sensitivities
 
@@ -123,7 +107,7 @@ class PlotFourierSensitivity:
         fig, ax = plt.subplots(constrained_layout=True)
         
         for i, name in enumerate(self.uvdata):
-            bin_centers, std_binned = self.__getWeightDistribution(name)
+            bin_centers, std_binned = self._getWeightDistribution(name)
             ax.plot(bin_centers, std_binned * 1e6, c=f'C{i}', label=name, **plot_kwargs)
             ps_sens = (1/np.nansum(1/std_binned**2))**0.5*1e6
             ax.axhline(ps_sens, c=f'C{i}', **axhline_kwargs)

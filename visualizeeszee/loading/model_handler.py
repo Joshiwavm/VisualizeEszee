@@ -20,17 +20,30 @@ class ModelHandler:
         
         # Core model record
         if source_type == 'parameters':
-            if model_type is None:
-                raise ValueError("model type required to make a model")
             if parameters is None:
                 raise ValueError("parameters required to make a model")
-            self.models[name] = {
-                'source': 'parameters',
-                'type': model_type,
-                'marginalized': False,
-                'parameters': parameters,
-                'calibration': [],  # default calibration
-            }
+            # Multi-component list: store as a single entry; map generation sums components.
+            # Use name directly — no _c0/_c1 suffixes.
+            if isinstance(parameters, list):
+                self.models[name] = {
+                    'source': 'parameters',
+                    'type': [p['model']['type'] for p in parameters],
+                    'marginalized': False,
+                    'parameters': parameters,   # list of {'model':..., 'spectrum':...}
+                    'calibration': [],
+                }
+            else:
+                if model_type is None:
+                    model_type = parameters.get('model', {}).get('type')
+                if model_type is None:
+                    raise ValueError("model_type required when parameters is a single dict")
+                self.models[name] = {
+                    'source': 'parameters',
+                    'type': model_type,
+                    'marginalized': False,
+                    'parameters': parameters,
+                    'calibration': [],
+                }
 
         elif source_type == 'pickle':
             
@@ -52,16 +65,28 @@ class ModelHandler:
                 n_quants = len(parameters)
                 n_compts = len(parameters[0]) if n_quants > 0 else 0
                 for i_quant in range(n_quants):
-                    for j_compt in range(n_compts):
-                        self.models[f'{name}_q{quantiles[i_quant]}_c{j_compt}'] = {
+                    compts = parameters[i_quant]
+                    if n_compts == 1:
+                        # Single component: store parameters directly
+                        self.models[f'{name}_q{quantiles[i_quant]}'] = {
                             'source': 'pickle',
                             'filename': filename,
-                            'type': parameters[i_quant][j_compt]['model']['type'],
+                            'type': compts[0]['model']['type'],
                             'quantile': quantiles[i_quant],
-                            'component': j_compt,
                             'marginalized': False,
-                            'parameters': parameters[i_quant][j_compt],
-                            'calibration': calibs[i_quant],  # default calibration
+                            'parameters': compts[0],
+                            'calibration': calibs[i_quant],
+                        }
+                    else:
+                        # Multi-component: store as list; get_map() sums them
+                        self.models[f'{name}_q{quantiles[i_quant]}'] = {
+                            'source': 'pickle',
+                            'filename': filename,
+                            'type': [c['model']['type'] for c in compts],
+                            'quantile': quantiles[i_quant],
+                            'marginalized': False,
+                            'parameters': compts,
+                            'calibration': calibs[i_quant],
                         }
             else:
                 self.models[name] = {

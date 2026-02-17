@@ -32,11 +32,21 @@ class MapMaking:
 
     # ------------------------------ Public API ------------------------------
     def get_map(self, model_info: Dict[str, Any], ra_map, dec_map, header, weight_0) -> np.ndarray:
-        if not model_info.get('marginalized', False):
-            return self.generate_model_from_parameters(
-                model_info['type'], model_info['parameters'], ra_map, dec_map, header
-            )
-        return self.generate_marginalized_model(model_info, ra_map, dec_map, header, weight_0)
+        if model_info.get('marginalized', False):
+            return self.generate_marginalized_model(model_info, ra_map, dec_map, header, weight_0)
+        params = model_info['parameters']
+        # Multi-component: parameters is a list — sum each component's map
+        if isinstance(params, list):
+            total = None
+            for p in params:
+                comp = self.generate_model_from_parameters(
+                    p['model']['type'], p, ra_map, dec_map, header
+                )
+                total = comp if total is None else total + comp
+            return total
+        return self.generate_model_from_parameters(
+            params['model']['type'], params, ra_map, dec_map, header
+        )
 
     @staticmethod
     def make_radial_grid(ra_map, dec_map, model_params):
