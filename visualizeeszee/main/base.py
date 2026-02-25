@@ -6,6 +6,8 @@ import warnings
 import os
 import numpy as np
 from astropy.io import fits
+from astropy.cosmology import FlatLambdaCDM
+from astropy import units as _u, constants as _const
 
 class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
     """
@@ -92,16 +94,50 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
                 return f"{val:.5g} deg  ({val*3600:.2f}\")"
             return f"{val:.4g}"
 
+        def _a10_gnfw_derived(mparams):
+            """Return (p0_kevcm3, r_s_mpc, r_s_deg) derived via the A10pars transform."""
+            try:
+                M500 = float(mparams.get('mass', 0.0))
+                c500 = float(mparams.get('c500', 1.0))
+                z    = float(mparams.get('redshift', 0.0))
+                bias = float(mparams.get('bias', 0.0))
+                P0   = float(mparams.get('p_norm', 0.0))
+                fb, mu, mue = 0.175, 0.590, 1.140
+                cosmo = FlatLambdaCDM(H0=70.0, Om0=0.3)
+                Hz       = cosmo.H(z)
+                rho_crit = cosmo.critical_density(z)
+                D_A      = cosmo.angular_diameter_distance(z).to(_u.Mpc).value
+                r500 = ((3.0 / 4.0 / np.pi / 500.0 / rho_crit)
+                        * (1.0 - bias) * M500 * _u.solMass) ** (1.0 / 3.0)
+                r_s_mpc = r500.to(_u.Mpc).value / c500
+                r_s_deg = np.degrees(r_s_mpc / D_A)
+                m500_log = np.log10(M500)
+                p0 = P0 * (3.0 / 8.0 / np.pi) * (fb * mu / mue)
+                p0 *= ((((2.5e2 * Hz * Hz) ** 2.0
+                         * (1.0 - bias) * (10 ** (m500_log - 15.0)) * _u.solMass
+                         / _const.G ** 0.5) ** (2.0 / 3.0)).to(_u.keV / _u.cm**3)).value
+                p0 *= 1e10
+                return p0, r_s_mpc, r_s_deg
+            except Exception:
+                return None, None, None
+
         def _print_params(params, indent):
             mparams = params.get('model', {})
             sparams = params.get('spectrum', {})
+            mtype   = mparams.get('type', '')
             keys = [k for k in mparams if k != 'type']
             for i, k in enumerate(keys):
-                pfx = L if (i == len(keys) - 1 and not sparams.get('type')) else T
+                pfx = L if (i == len(keys) - 1 and not sparams.get('type') and mtype != 'A10Pressure') else T
                 print(f"{indent}{pfx}{k}: {_fmt(k, mparams[k])}")
             stype = sparams.get('type', '')
             if stype:
                 print(f"{indent}{L}spectrum: {stype}")
+            if mtype == 'A10Pressure':
+                p0, r_s_mpc, r_s_deg = _a10_gnfw_derived(mparams)
+                if p0 is not None:
+                    print(f"{indent}{T}[gNFW equiv.]")
+                    print(f"{indent}{T}  p0:  {p0:.4e} keV/cm³")
+                    print(f"{indent}{L}  r_s: {r_s_mpc:.4f} Mpc  ({r_s_deg*3600:.2f}\")")
 
         # ── Data ──────────────────────────────────────────────────────
         uv_names  = [k for k in self.data['uv'] if k != 'metadata']
@@ -147,10 +183,18 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
             print(f"\nPoint sources  ({len(self.point_sources)}, UV-plane only):")
             for i, ps in enumerate(self.point_sources):
                 pfx = '└── ' if i == len(self.point_sources) - 1 else '├── '
-                amp_ujy = ps['amplitude'] * 1e6
-                print(f"  {pfx}PS{i}  ra={ps['ra']:.6f}  dec={ps['dec']:.6f}"
-                      f"  amp={amp_ujy:.3g} µJy  α={ps['spec_index']:.3g}"
-                      f"  ref_freq={ps['ref_freq']/1e9:.0f} GHz")
+                if ps.get('spec_type') == 'doublePowerLaw':
+                    a1_ujy = ps.get('amp1', ps['amplitude']) * 1e6
+                    a2_ujy = ps.get('amp2', ps['amplitude']) * 1e6
+                    print(f"  {pfx}PS{i}  ra={ps['ra']:.6f}  dec={ps['dec']:.6f}"
+                          f"  [doublePowerLaw]"
+                          f"  α1={ps['spec_index']:.3g}  amp1={a1_ujy:.3g} µJy @ {ps['ref_freq']/1e9:.0f} GHz"
+                          f"  α2={ps.get('spec_index2', 0):.3g}  amp2={a2_ujy:.3g} µJy @ {ps.get('ref_freq2', 4e10)/1e9:.0f} GHz")
+                else:
+                    amp_ujy = ps['amplitude'] * 1e6
+                    print(f"  {pfx}PS{i}  ra={ps['ra']:.6f}  dec={ps['dec']:.6f}"
+                          f"  amp={amp_ujy:.3g} µJy  α={ps['spec_index']:.3g}"
+                          f"  ref_freq={ps['ref_freq']/1e9:.0f} GHz")
 
         # ── Matched summary ───────────────────────────────────────────
         if self.matched_models:

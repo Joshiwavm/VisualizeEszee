@@ -26,6 +26,14 @@ distributions:
     function: tSZ
     parameters: {}
 
+  doublePowerLaw:
+    function: doublePowerLaw
+    parameters:
+      SpecIndex1: -0.7
+      SpecIndex2: 3.0
+      Amp_sync: 1.0e-5
+      Amp_dust: 1.0e-5
+
   Scaling:
     function: Scaling
     parameters:

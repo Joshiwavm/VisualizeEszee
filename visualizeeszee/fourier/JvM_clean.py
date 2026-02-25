@@ -116,6 +116,8 @@ class Deconvolve:
         assoc = self.matched_models[model_name].setdefault(concat_dn, {})
         assoc['deconvolved'] = jvm_image.astype(np.float32)
         assoc['std'] = std
+        assoc['header'] = header          # smallest-beam header (pixel scale for plot_map)
+        assoc['pixel_scale_deg'] = pixel_scale_deg
 
         if save_output is not None:
             os.makedirs(save_output, exist_ok=True)

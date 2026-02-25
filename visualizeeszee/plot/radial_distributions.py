@@ -13,7 +13,7 @@ class PlotRadialDistributions:
     def _get_binned_uvdatapoints(self, band_name, nbins=20, custom_phase_center=None):
         """
         Bin UV data points radially after phase shifting all fields to central field.
-        
+
         Parameters
         ----------
         band_name : str
@@ -23,7 +23,7 @@ class PlotRadialDistributions:
         custom_phase_center : tuple, optional
             Custom phase center (RA, Dec) in degrees to shift all fields to.
             If None, uses automatically determined central field.
-            
+
         Returns
         -------
         tuple
@@ -39,7 +39,7 @@ class PlotRadialDistributions:
         else:
             print(f"Using central field: {central_field}")
             central_phase_center = self.uvdata[band_name][central_field]['phase_center']
-        
+
         # Collect phase-shifted data only for the central field
         all_uvreals = []
         all_uvimags = []
@@ -59,10 +59,12 @@ class PlotRadialDistributions:
             if spw_name == 'phase_center':
                 continue
 
+            raw_vis = spw_data.uvreal + 1j * spw_data.uvimag
+
             # Apply phase shift
-            shifted_data = self.phase_shift(spw_data.uvreal + 1j * spw_data.uvimag,
-                                                  spw_data.uwave, spw_data.vwave,
-                                                  dRA_rad, dDec_rad)
+            shifted_data = self.phase_shift(raw_vis,
+                                            spw_data.uwave, spw_data.vwave,
+                                            dRA_rad, dDec_rad)
 
             # Calculate UV distance
             uvdist = np.sqrt(spw_data.uwave**2 + spw_data.vwave**2)
@@ -104,7 +106,7 @@ class PlotRadialDistributions:
     def _get_or_compute_model_slice(self, model_name: str, data_name: str,
                                      field_key: str, spw_key: str,
                                      npts: int, r_min_k: float, r_max_k: float,
-                                     axis: str = 'v', custom_phase_center = None):
+                                     axis: str = 'v', custom_phase_center=None):
         """Return (k_vals, real, imag) for a model's visibility slice.
 
         This implementation phase-shifts the entire uv-grid and then takes a
@@ -251,7 +253,7 @@ class PlotRadialDistributions:
 
     # ----------------- Main plotting script ------------------------
 
-    def plot_radial_distributions(self, nbins=20, save_plots=True, output_dir='../plots/uvplots/', 
+    def plot_radial_distributions(self, nbins=20, save_plots=True, output_dir='../plots/uvplots/',
                                 custom_phase_center=None, use_style=True, data_name: str | None = None,
                                 model_name: str | None = None,
                                 n_model_pts: int = 500, r_min_k: float = 1, r_max_k: float = 20.0,
@@ -299,7 +301,7 @@ class PlotRadialDistributions:
         for i, name in enumerate(dataset_names):
             current_nbins = nbins_list[i]
             UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_centers = self._get_binned_uvdatapoints(
-                name, current_nbins, custom_phase_center
+                name, current_nbins, custom_phase_center,
             )
             h_real = self._plot_single_radial_distribution(
                 UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors,
@@ -341,7 +343,7 @@ class PlotRadialDistributions:
                     k_vals, real_line, imag_line = self._get_or_compute_model_slice(
                         mname, name, central_field, spw_used,
                         n_model_pts, r_min_k, r_max_k, axis,
-                        custom_phase_center=custom_phase_center
+                        custom_phase_center=custom_phase_center,
                     )
 
                     axes[0].plot(k_vals, real_line * 1e3, lw=1.5, ls=model_linestyles_map[mname], c=dataset_color, label='__nolegend__')

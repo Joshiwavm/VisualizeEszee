@@ -4,9 +4,11 @@ import scipy
 
 from typing import Tuple, Sequence, Dict, Any, Optional
 
-# Default reference frequency used by the eszee forward model (getinfo(reffreq=1e11)).
-# Spectral model: S(nu) = amplitude * (nu / ESZEE_REF_FREQ) ** spec_index
-ESZEE_REF_FREQ: float = 1e11  # 100 GHz in Hz
+# Default reference frequencies used by the eszee forward model.
+# reffreq  (getinfo(reffreq=1e11))  = 100 GHz — synchrotron component
+# reffreq2 (getinfo(reffreq2=4e10)) =  40 GHz — dust/thermal component (doublePowerLaw)
+ESZEE_REF_FREQ:  float = 1e11  # 100 GHz in Hz
+ESZEE_REF_FREQ2: float = 4e10  #  40 GHz in Hz
 
 
 class LoadPickles:
@@ -247,29 +249,62 @@ class LoadPickles:
         if filename is not None:
             self.results = np.load(filename, allow_pickle=True)
 
-        ps_list = []
+        # Posterior medians for all free parameters, in the same order as vary[].
+        # For frozen runs every vary flag is False so quantile_array has 0 rows and
+        # the idx_quant path is never taken — behaviour is identical to before.
+        quantile_array = self.read_quantiles(None, quantiles=[0.50])  # (n_free, 1)
+
+        ps_list  = []
+        idx_quant = 0  # free-param counter shared across all components
+
         for j_compt, vary in enumerate(self.results['vary'][:-1]):
             model_type = vary['values']['model'].get('type', '')
+            vary_model = list(vary['values']['model'].get('vary', []))
+            vary_spec  = list(vary['values']['spectrum'].get('vary', []))
+
             if model_type != 'pointSource':
-                continue
-            try:
-                pars_m = self.results['pars'][j_compt]['model']
-                pars_s = self.results['pars'][j_compt]['spectrum']
-                guess_m = pars_m['guess']
-                guess_s = pars_s['guess']
-            except (IndexError, KeyError):
+                idx_quant += sum(bool(v) for v in vary_model) + sum(bool(v) for v in vary_spec)
                 continue
 
+            try:
+                guess_m = list(self.results['pars'][j_compt]['model']['guess'])
+                guess_s = list(self.results['pars'][j_compt]['spectrum']['guess'])
+            except (IndexError, KeyError):
+                idx_quant += sum(bool(v) for v in vary_model) + sum(bool(v) for v in vary_spec)
+                continue
+
+            # For each positional param: use posterior median if free, else use guess.
+            def _read(guess, flags, i):
+                nonlocal idx_quant
+                if i < len(flags) and bool(flags[i]):
+                    val = float(quantile_array[idx_quant, 0])
+                    idx_quant += 1
+                    return val
+                return float(guess[i]) if i < len(guess) else 0.0
+
+            n_model = max(len(vary_model), len(guess_m))
+            m_vals  = [_read(guess_m, vary_model, i) for i in range(n_model)]
+
+            n_spec  = max(len(vary_spec), len(guess_s))
+            s_vals  = [_read(guess_s,  vary_spec,  i) for i in range(n_spec)]
+
             spec_type = vary['values']['spectrum'].get('type', 'powerLaw')
-            ps_list.append({
-                'ra':        float(guess_m[0]),
-                'dec':       float(guess_m[1]),
-                'amplitude': float(guess_m[2]),
-                'offset':    float(guess_m[3]) if len(guess_m) > 3 else 0.0,
-                'spec_type': spec_type,
-                'spec_index': float(guess_s[0]) if len(guess_s) > 0 else 0.0,
-                'ref_freq':  ESZEE_REF_FREQ,
-            })
+            entry = {
+                'ra':         m_vals[0] if len(m_vals) > 0 else 0.0,
+                'dec':        m_vals[1] if len(m_vals) > 1 else 0.0,
+                'amplitude':  m_vals[2] if len(m_vals) > 2 else 0.0,
+                'offset':     m_vals[3] if len(m_vals) > 3 else 0.0,
+                'spec_type':  spec_type,
+                'spec_index': s_vals[0] if len(s_vals) > 0 else 0.0,
+                'ref_freq':   ESZEE_REF_FREQ,
+            }
+            if spec_type == 'doublePowerLaw':
+                entry['spec_index']  = s_vals[1] if len(s_vals) > 1 else 0.0  # alpha2, dust
+                entry['spec_index2'] = s_vals[0] if len(s_vals) > 0 else 0.0  # alpha1, sync
+                entry['amp1']        = s_vals[3] if len(s_vals) > 3 else 0.0  # A_dust @100GHz
+                entry['amp2']        = s_vals[2] if len(s_vals) > 2 else 0.0  # A_sync @40GHz
+                entry['ref_freq2']   = ESZEE_REF_FREQ2
+            ps_list.append(entry)
 
         # Cache on self so summary() can display them
         self.point_sources = ps_list

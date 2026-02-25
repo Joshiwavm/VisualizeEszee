@@ -73,6 +73,21 @@ class FourierManager:
     def _scale_scaling(spec: Dict[str, Any], freq: float) -> float:
         return float(spec.get('amp', 1.0))
 
+    @staticmethod
+    def _scale_doublepowerlaw(spec: Dict[str, Any], freq: float) -> float:
+        # Parameters: [alpha1, alpha2, A_sync (Jy), A_dust (Jy)]
+        # Model amplitude frozen at 1; both amplitudes live in spectrum params.
+        # A_sync normalised at ref2=40GHz (Band 1); A_dust normalised at ref1=100GHz (Band 3).
+        # Returns flux in Jy (not dimensionless) — model_amp must be 1.
+        guess  = spec.get('guess', [])
+        alpha1 = float(guess[0]) if len(guess) > 0 else 0.0
+        alpha2 = float(guess[1]) if len(guess) > 1 else 0.0
+        A_sync = float(guess[2]) if len(guess) > 2 else 0.0
+        A_dust = float(guess[3]) if len(guess) > 3 else 0.0
+        ref1   = float(spec.get('ref_freq',  1e11))
+        ref2   = float(spec.get('ref_freq2', 4e10))
+        return A_sync * (freq / ref2) ** alpha1 + A_dust * (freq / ref1) ** alpha2
+
     def _spectral_scale(self, spec: Dict[str, Any], freq: float) -> float:
         stype = str(spec.get('type', '')).lower()
         if stype == 'powerlaw':
@@ -83,6 +98,8 @@ class FourierManager:
             return self._scale_powerdust(spec, freq)
         if stype == 'scaling':
             return self._scale_scaling(spec, freq)
+        if stype == 'doublepowerlaw':
+            return self._scale_doublepowerlaw(spec, freq)
         return float(spec.get('amp', 1.0))
 
     # ----------------- Fourier operations ------------------------
@@ -474,45 +491,40 @@ class FourierManager:
                                  amplitude: float, offset: float,
                                  spec_index: float,
                                  crval1: float, crval2: float,
-                                 ref_freq: float = 1e11) -> np.ndarray:
+                                 ref_freq: float = 1e11,
+                                 spec_type: str = 'powerLaw',
+                                 spec_index2: float = 0.0,
+                                 amp1: Optional[float] = None,
+                                 amp2: Optional[float] = None,
+                                 ref_freq2: float = 4e10,
+                                 pb_factor: float = 1.0) -> np.ndarray:
         """Compute analytical visibility contribution of a point source.
 
-        Matches the Veszee FT._uvpoint convention::
+        Mirrors the eszee FT._uvpoint convention.  Fitted amplitudes are
+        intrinsic fluxes (eszee applies the primary beam in its forward model);
+        pb_factor re-applies it so that the subtraction is consistent.
 
-            vis = offset + amplitude * (freq/ref_freq)^spec_index
+        For powerLaw::
+            vis = offset + pb_factor * amplitude * (freq/ref_freq)^spec_index
                   * exp(2πi (u·dRA + v·dDec))
 
-        The point-source amplitudes from the pickle are apparent fluxes
-        (as fitted in the UV plane), so no additional primary-beam
-        correction is applied here.
-
-        Parameters
-        ----------
-        u, v : array
-            UV coordinates in wavelengths (same units as stored UVData).
-        freq : array
-            Per-visibility frequency in Hz (uvfreq from UVData).
-        ra_ps, dec_ps : float
-            Point-source position in degrees.
-        amplitude : float
-            Apparent flux density at ref_freq in Jy.
-        offset : float
-            Constant visibility offset (usually 0).
-        spec_index : float
-            Spectral index α  (S ∝ ν^α).
-        crval1, crval2 : float
-            Field phase-centre (RA, Dec) in degrees.
-        ref_freq : float
-            Reference frequency in Hz (default 100 GHz, matching Veszee).
-
-        Returns
-        -------
-        vis : complex ndarray
+        For doublePowerLaw::
+            vis = offset + pb_factor * [amp1*(freq/ref_freq)^alpha1
+                                      + amp2*(freq/ref_freq2)^alpha2]
+                  * exp(2πi (u·dRA + v·dDec))
         """
         dRA  = np.deg2rad(ra_ps  - crval1) * np.cos(np.deg2rad(crval2))
         dDec = np.deg2rad(dec_ps - crval2)
-        spec_scale = (np.asarray(freq) / ref_freq) ** spec_index
-        return offset + amplitude * spec_scale * np.exp(2j * np.pi * (u * dRA + v * dDec))
+        phase = np.exp(2j * np.pi * (u * dRA + v * dDec))
+        freq  = np.asarray(freq)
+        if spec_type == 'doublePowerLaw':
+            a1 = float(amp1 if amp1 is not None else amplitude)
+            a2 = float(amp2 if amp2 is not None else 0.0)
+            spec_scale = (a1 * (freq / ref_freq)  ** spec_index
+                        + a2 * (freq / ref_freq2) ** spec_index2)
+            return offset + pb_factor * spec_scale * phase
+        spec_scale = (freq / ref_freq) ** spec_index
+        return offset + pb_factor * amplitude * spec_scale * phase
 
     def apply_point_source_correction(self, model_name: str, data_name: str,
                                       ps_list: list) -> None:
@@ -538,7 +550,8 @@ class FourierManager:
         if not ps_list:
             return
 
-        sm = self.matched_models[model_name][data_name].get('sampled_model', {})
+        sm   = self.matched_models[model_name][data_name].get('sampled_model', {})
+        maps = self.matched_models[model_name][data_name].get('maps', {})
 
         for field_key, spw_map in sm.items():
             for spw_key, entry in spw_map.items():
@@ -550,9 +563,29 @@ class FourierManager:
                 pc = self.uvdata[data_name].get(field_key, {}).get('phase_center', (0.0, 0.0))
                 crval1, crval2 = float(pc[0]), float(pc[1])
 
+                # Build PB spline for this field/spw — mirrors eszee data.py construction
+                pb_entry = maps.get(field_key, {}).get(spw_key, {})
+                pbeam_spline = None
+                if 'pbeam_data' in pb_entry and 'header' in pb_entry:
+                    pb2d = np.squeeze(pb_entry['pbeam_data'])
+                    pb2d = np.nan_to_num(pb2d, nan=0.0)
+                    ny, nx = pb2d.shape
+                    pbeam_spline = RectBivariateSpline(
+                        np.linspace(0, ny, ny), np.linspace(0, nx, nx),
+                        pb2d, kx=1, ky=1, s=0
+                    )
+
                 # Accumulate total PS contribution for this field/spw
                 ps_vis_total = np.zeros(len(u), dtype=np.complex128)
                 for ps in ps_list:
+                    # Evaluate PB at PS position — mirrors eszee main.py
+                    pb_factor = 1.0
+                    if pbeam_spline is not None:
+                        hdr = pb_entry['header']
+                        ps_xpix = hdr['CRPIX1'] + (ps['ra']  - hdr['CRVAL1']) * np.cos(np.deg2rad(hdr['CRVAL2'])) / hdr['CDELT1']
+                        ps_ypix = hdr['CRPIX2'] + (ps['dec'] - hdr['CRVAL2']) / hdr['CDELT2']
+                        pb_factor = float(pbeam_spline.ev(ps_ypix, ps_xpix))
+
                     ps_vis_total += self.compute_point_source_vis(
                         u, v, freq,
                         ra_ps=ps['ra'], dec_ps=ps['dec'],
@@ -560,7 +593,21 @@ class FourierManager:
                         spec_index=ps['spec_index'],
                         crval1=crval1, crval2=crval2,
                         ref_freq=ps.get('ref_freq', 1e11),
+                        spec_type=ps.get('spec_type', 'powerLaw'),
+                        spec_index2=ps.get('spec_index2', 0.0),
+                        amp1=ps.get('amp1'),
+                        amp2=ps.get('amp2'),
+                        ref_freq2=ps.get('ref_freq2', 4e10),
+                        pb_factor=pb_factor,
                     )
 
                 # resid_vis = data_vis - sz_model_vis - ps_vis
                 entry['resid_vis'] = entry['resid_vis'] - ps_vis_total
+
+                # Also update the raw uvdata so downstream plots (e.g. radial
+                # distributions) automatically see PS-subtracted visibilities.
+                old = self.uvdata[data_name][field_key][spw_key]
+                self.uvdata[data_name][field_key][spw_key] = old._replace(
+                    uvreal=old.uvreal - ps_vis_total.real,
+                    uvimag=old.uvimag - ps_vis_total.imag,
+                )

@@ -44,7 +44,7 @@ class PlotPressureProfiles:
         
         fig, ax = plt.subplots()
         fig.set_figwidth(5.5)
-        fig.set_figheight(5.5)
+        fig.set_figheight(4)
         
         for model_name in model_names:
             model_info = self.models[model_name]
