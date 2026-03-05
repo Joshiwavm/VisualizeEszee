@@ -27,3 +27,12 @@ ENV/
 # Mac / Linux / Windows junk
 .DS_Store
 Thumbs.db
+
+# Data files (never commit large data)
+*.npz
+*.fits
+*.pkl
+*.pickle
+dumps/
+output/
+data/
