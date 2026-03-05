@@ -168,10 +168,11 @@ class PlotMaps:
                     'CDELT1': -jpix,
                     'CDELT2':  jpix,
                 }
-                if ipix_deg is None:
-                    ipix_deg = jpix_deg = jpix
-                if not header:
-                    header = joint_header
+                # Always use the joint map's WCS for fov/beam calculations —
+                # the pre-existing header (from ds_entry field0/spw0) has a different
+                # CRVAL than the joint image centre and would mis-place the crop.
+                ipix_deg = jpix_deg = jpix
+                header = joint_header
 
         # Build panel list
         panels = []
