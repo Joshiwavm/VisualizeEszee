@@ -72,8 +72,9 @@ class PlotFourierSensitivity:
         
         return act_sensitivities
 
-    def plot_weight_distributions(self, save_plots=False, output_dir='../plots/fourier_sensitivity/',
-                                  use_style=True, return_fig: bool = False, **plot_kwargs):
+    def plot_weight_distributions(self, save_plots=False, output_dir=None,
+                                  use_style=True, return_fig: bool = False,
+                                  show_label: bool = True, **plot_kwargs):
         """
         Plots binned and point source sensitivity for all loaded uvdata sets.
         
@@ -104,7 +105,7 @@ class PlotFourierSensitivity:
         if 'ls' not in axhline_kwargs:
             axhline_kwargs['ls'] = ':'
         
-        fig, ax = plt.subplots(constrained_layout=True)
+        fig, ax = plt.subplots(figsize=(4, 4), constrained_layout=True)
         
         for i, name in enumerate(self.uvdata):
             bin_centers, std_binned = self._getWeightDistribution(name)
@@ -128,28 +129,31 @@ class PlotFourierSensitivity:
                            [act_sensitivities[name]['090']*1e6]*2, 
                            label=f'ACT 90 GHz', c=f'C{color_offset+j*2+1}', ls='--', **plot_kwargs)
 
-        ax.text(0.03, 0.97, f'{self.target}', transform=ax.transAxes, fontsize=12,
-                verticalalignment='top', 
-                bbox=dict(boxstyle='round,pad=0.3', edgecolor='black', facecolor='white'))
-        ax.set_xlabel(r'uv-distance [k$\lambda$]', fontsize=12)
-        ax.set_ylabel(r'$\sigma$ [$\mu$Jy]', fontsize=12)
+        if show_label:
+            ax.text(0.03, 0.97, f'{self.target}', transform=ax.transAxes, fontsize=9,
+                    verticalalignment='top',
+                    bbox=dict(boxstyle='round,pad=0.3', edgecolor='black', facecolor='white'))
+        ax.set_xlabel(r'uv-distance [k$\lambda$]', fontsize=9)
+        ax.set_ylabel(r'$\sigma$ [$\mu$Jy]', fontsize=9)
         ax.set_xscale('log')
         ax.set_yscale('log')
-        ax.tick_params(axis='x', which='both', top=False)
-        
+        ax.tick_params(axis='x', which='both', top=False, labelsize=9)
+        ax.tick_params(axis='y', labelsize=9)
+
         ax.axis(xmin=1e0, xmax=1e2)
 
         secax = ax.secondary_xaxis('top', functions=(arcsec_to_uvdist, uvdist_to_arcsec))
-        secax.set_xlabel('Spatial scale ["]')
-        plt.legend(frameon=True, loc=1)
+        secax.set_xlabel('Spatial scale ["]', fontsize=9)
+        secax.tick_params(labelsize=9)
+        plt.legend(frameon=False, loc=1, fontsize=7)
 
         if save_plots:
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-            filename = 'fourier_weight_distributions.png'
-            if hasattr(self, 'target') and self.target:
-                safe_target = str(self.target).replace(' ', '_')
-                filename = f'fourier_weight_distributions_{safe_target}.png'
+            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+            if output_dir is None:
+                output_dir = f'../plots/VisualizeEszee/{_safe_target}/fourier_sensitivity/'
+            os.makedirs(output_dir, exist_ok=True)
+            _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
+            filename = f'{_prefix}fourier_weight_distributions.png'
             plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
 
         if return_fig:

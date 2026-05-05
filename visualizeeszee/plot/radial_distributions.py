@@ -10,7 +10,7 @@ class PlotRadialDistributions:
 
     # ----------------- Compute raidal uvprofiles ------------------------
 
-    def _get_binned_uvdatapoints(self, band_name, nbins=20, custom_phase_center=None):
+    def _get_binned_uvdatapoints(self, band_name, nbins=20, custom_phase_center=None, log_bins=False):
         """
         Bin UV data points radially after phase shifting all fields to central field.
 
@@ -80,28 +80,34 @@ class PlotRadialDistributions:
         UVdist = np.concatenate(all_uvdist)
         UVwghts = np.concatenate(all_uvwghts)
         
-        # Perform binning
-        bins = np.linspace(0, len(UVdist[UVdist > 0]) - 1, nbins, dtype=int)
-        UVdist_sorted = np.sort(UVdist[UVdist > 0])
-            
-        UVrealbinned = np.empty(nbins - 1)
-        UVrealerrors = np.empty(nbins - 1)
-        UVimagbinned = np.empty(nbins - 1)
-        UVimagerrors = np.empty(nbins - 1)
-        bin_cs = np.empty(nbins - 1)
-            
-        for i in range(len(bins) - 1):
-            mask = (UVdist > UVdist_sorted[bins[i]]) & (UVdist <= UVdist_sorted[bins[i + 1]])        
-            
-            UVrealbinned[i], UVrealerrors[i] = np.average(UVreals[mask], weights=UVwghts[mask], returned=True) 
-            UVimagbinned[i], UVimagerrors[i] = np.average(UVimags[mask], weights=UVwghts[mask], returned=True)
+        # Build bin edges
+        UVdist_pos = UVdist[UVdist > 0]
+        if log_bins:
+            bin_edges = np.logspace(np.log10(UVdist_pos.min()), np.log10(UVdist_pos.max()), nbins)
+        else:
+            UVdist_sorted = np.sort(UVdist_pos)
+            idx = np.linspace(0, len(UVdist_sorted) - 1, nbins, dtype=int)
+            bin_edges = UVdist_sorted[idx]
 
-            UVrealerrors[i] = UVrealerrors[i]**(-0.5) 
-            UVimagerrors[i] = UVimagerrors[i]**(-0.5) 
-                
+        n_bins = nbins - 1
+        UVrealbinned = np.full(n_bins, np.nan)
+        UVrealerrors = np.full(n_bins, np.nan)
+        UVimagbinned = np.full(n_bins, np.nan)
+        UVimagerrors = np.full(n_bins, np.nan)
+        bin_cs = np.full(n_bins, np.nan)
+
+        for i in range(n_bins):
+            mask = (UVdist > bin_edges[i]) & (UVdist <= bin_edges[i + 1])
+            if mask.sum() == 0:
+                continue
+            UVrealbinned[i], sum_w_re = np.average(UVreals[mask], weights=UVwghts[mask], returned=True)
+            UVimagbinned[i], sum_w_im = np.average(UVimags[mask], weights=UVwghts[mask], returned=True)
+            # σ = 1/sqrt(Σw_i) for inverse-variance weighted mean
+            UVrealerrors[i] = sum_w_re**(-0.5)
+            UVimagerrors[i] = sum_w_im**(-0.5)
             bin_cs[i] = np.median(UVdist[mask])
 
-        return UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, UVdist_sorted[bins], bin_cs
+        return UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_cs
 
     def _get_or_compute_model_slice(self, model_name: str, data_name: str,
                                      field_key: str, spw_key: str,
@@ -152,9 +158,9 @@ class PlotRadialDistributions:
 
     # ----------------- Plotting scripts ------------------------
 
-    def _plot_single_radial_distribution(self, UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, 
+    def _plot_single_radial_distribution(self, UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors,
                                        bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
-                                       label_imag: bool = True, **kwargs):
+                                       label_imag: bool = True, show_label: bool = True, **kwargs):
         """
         Create a single radial distribution plot.
         
@@ -196,19 +202,20 @@ class PlotRadialDistributions:
                    **errorbar_kwargs)
 
         ax.axhline(0, ls='dashed', c='gray', alpha=0.7)
-        ax.set_ylabel('Re(V) [mJy]')
+        ax.set_ylabel('Re(V) [mJy]', fontsize=9)
         ax.set_xlabel('')
-        
+        ax.tick_params(axis='both', labelsize=9)
+
         # Add secondary axis for spatial scale (only once)
         if color_idx == 0:
-            # add_secondary_uv_axis(ax)
             secax = ax.secondary_xaxis('top', functions=(arcsec_to_uvdist, uvdist_to_arcsec))
-            secax.set_xlabel('Spatial scale ["]')
+            secax.set_xlabel('Spatial scale ["]', fontsize=9)
+            secax.tick_params(labelsize=9)
             ax.tick_params(axis='x', which='both', top=False)
-        
+
         # Set axis limits
-        ax.set_ylim(-2.1, 0.6)
-        ax.set_xlim(1e0,1e1)
+        ax.set_ylim(-4, 0.6)
+        ax.set_xlim(1e0, 2e1)
 
         ax.set_xscale('log')
 
@@ -238,28 +245,31 @@ class PlotRadialDistributions:
 
         ax.axhline(0, ls='dashed', c='gray', alpha=0.7)
         ax.set_ylim(-0.4, 0.4)
-        ax.set_xlim(1e0,1e1)
+        ax.set_xlim(1e0, 2e1)
 
-        ax.set_ylabel('Imag(V) [mJy]')
-        ax.set_xlabel(r'uv-distance [k$\lambda$]')
+        ax.set_ylabel('Imag(V) [mJy]', fontsize=9)
+        ax.set_xlabel(r'uv-distance [k$\lambda$]', fontsize=9)
+        ax.tick_params(axis='both', labelsize=9)
         ax.set_xscale('log')
 
         # Add target name if available (only once)
-        if hasattr(self, 'target') and self.target and color_idx == 0:
-            ax.text(0.03, 0.97, f'{self.target}', transform=axes[0].transAxes, 
-                   fontsize=10, verticalalignment='top', 
+        if show_label and hasattr(self, 'target') and self.target and color_idx == 0:
+            ax.text(0.03, 0.97, f'{self.target}', transform=axes[0].transAxes,
+                   fontsize=9, verticalalignment='top',
                    bbox=dict(boxstyle='round,pad=0.3', edgecolor='black', facecolor='white'))
         return errorbar_kwargs.get('handle', ax)  # return axis for handle capture (we'll just return ax)
 
     # ----------------- Main plotting script ------------------------
 
-    def plot_radial_distributions(self, nbins=20, save_plots=True, output_dir='../plots/uvplots/',
+    def plot_radial_distributions(self, nbins=20, save_plots=True, output_dir=None,
                                 custom_phase_center=None, use_style=True, data_name: str | None = None,
                                 model_name: str | None = None,
                                 n_model_pts: int = 500, r_min_k: float = 1, r_max_k: float = 20.0,
                                 axis: str = 'v',
                                 separate_legends: bool = True,
                                 return_fig: bool = False,
+                                show_label: bool = True,
+                                log_bins: bool = False,
                                 **kwargs):
         """
         Plot radial UV distributions.
@@ -270,8 +280,11 @@ class PlotRadialDistributions:
         if use_style:
             style_applied = setup_plot_style()
             
-        if save_plots and not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+        if save_plots:
+            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+            if output_dir is None:
+                output_dir = f'../plots/VisualizeEszee/{_safe_target}/uvplots/'
+            os.makedirs(output_dir, exist_ok=True)
 
         # Select datasets
         if data_name is not None:
@@ -291,9 +304,8 @@ class PlotRadialDistributions:
         else:
             raise ValueError("nbins must be an integer or a list of integers")
 
-        fig, axes = plt.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [4, 1], 'hspace': 0.0})
-        fig.set_figwidth(5.5)
-        fig.set_figheight(5.5)
+        fig, axes = plt.subplots(2, 1, sharex=True, figsize=(4, 5),
+                                 gridspec_kw={'height_ratios': [4, 1], 'hspace': 0.0})
 
         # Data plotting -------------------------------------------------
         color_idx = 0
@@ -301,12 +313,12 @@ class PlotRadialDistributions:
         for i, name in enumerate(dataset_names):
             current_nbins = nbins_list[i]
             UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_centers = self._get_binned_uvdatapoints(
-                name, current_nbins, custom_phase_center,
+                name, current_nbins, custom_phase_center, log_bins=log_bins,
             )
             h_real = self._plot_single_radial_distribution(
                 UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors,
                 bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
-                label_imag=False, **kwargs
+                label_imag=False, show_label=show_label, **kwargs
             )
             data_handles.append(h_real)
             color_idx += 1
@@ -361,22 +373,24 @@ class PlotRadialDistributions:
                 color = f"C{i % 10}"
                 proxy_handles.append(Line2D([0], [0], ls='', marker='D', markerfacecolor='white',
                                             markeredgecolor=color, color=color, label=dn))
-            leg_data = axes[0].legend(proxy_handles, data_labels, frameon=False, loc='lower right', fontsize=9, title='Data')
+            leg_data = axes[0].legend(proxy_handles, data_labels, frameon=False, loc='lower right', fontsize=7, title='Data', title_fontsize=9)
             if model_linestyles_map:
                 model_legend_handles = [Line2D([0], [0], color='black', lw=1.5, linestyle=ls, label=mn)
                                         for mn, ls in model_linestyles_map.items()]
                 leg_models = axes[0].legend(model_legend_handles,
                                             [h.get_label() for h in model_legend_handles],
-                                            frameon=False, loc='lower left', fontsize=9, title='Models')
+                                            frameon=False, loc='lower left', fontsize=7, title='Models', title_fontsize=9)
                 # Preserve both legends on same axes
                 axes[0].add_artist(leg_data)
         else:
-            axes[0].legend(frameon=False, loc='lower right', fontsize=9)
+            axes[0].legend(frameon=False, loc='lower right', fontsize=7)
 
         plt.tight_layout()
 
         if save_plots:
-            filename = 'UVradial_data_combined.png' if data_name is None else f'UVradial_{data_name}.png'
+            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+            _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
+            filename = _prefix + ('UVradial_data_combined.png' if data_name is None else f'UVradial_{data_name}.png')
             plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
             print(f"Saved plot: {output_dir}/{filename}")
         

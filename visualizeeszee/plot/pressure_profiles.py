@@ -18,15 +18,18 @@ class PlotPressureProfiles:
     This class is designed to be inherited by other plotting classes.
     """
         
-    def plot_pressure_profile(self, model_names=None, r_range=(1, 2000), n_points=200, 
-                              save_plots=False, output_dir='../plots/pressure_profiles/',
+    def plot_pressure_profile(self, model_names=None, r_range=(1, 2000), n_points=200,
+                              save_plots=False, output_dir=None,
                               use_style=True, return_fig: bool = False, **plot_kwargs):
         # Setup plot style if requested
         if use_style:
             setup_plot_style()
             
-        if save_plots and not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+        if save_plots:
+            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+            if output_dir is None:
+                output_dir = f'../plots/VisualizeEszee/{_safe_target}/pressure_profiles/'
+            os.makedirs(output_dir, exist_ok=True)
         
         if not hasattr(self, 'models') or not self.models:
             raise ValueError("No models have been added. Use add_model() first.")
@@ -116,7 +119,9 @@ class PlotPressureProfiles:
         ax.set_xlim(r_range)
         
         if save_plots:
-            filename = 'pressure_profile_comparison.png' if len(model_names) > 1 else f'pressure_profile_{model_names[0]}.png'
+            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+            _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
+            filename = _prefix + ('pressure_profile_comparison.png' if len(model_names) > 1 else f'pressure_profile_{model_names[0]}.png')
             plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
 
         if return_fig:

@@ -5,5 +5,6 @@ from .pressure_profiles import PlotPressureProfiles
 from .maps import PlotMaps
 from .corner_plot import PlotCorner
 from .ps_spectra import PlotPointSourceSpectra
+from .parameter_table import PlotParameterTable
 
-__all__ = ['PlotGatherer', 'PlotFourierSensitivity', 'PlotRadialDistributions', 'PlotPressureProfiles', 'PlotMaps', 'PlotCorner', 'PlotPointSourceSpectra']
+__all__ = ['PlotGatherer', 'PlotFourierSensitivity', 'PlotRadialDistributions', 'PlotPressureProfiles', 'PlotMaps', 'PlotCorner', 'PlotPointSourceSpectra', 'PlotParameterTable']

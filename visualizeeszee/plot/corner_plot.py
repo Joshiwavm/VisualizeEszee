@@ -101,7 +101,8 @@ class PlotCorner:
         labels: list[str] | None = None,
         backend: str = 'corner',
         unit_scale: dict[int, float] | None = None,
-        save_output: str | None = None,
+        save_plots: bool = False,
+        output_dir: str | None = None,
         use_style: bool = True,
         n_sigma_range: float = 4.0,
         return_fig: bool = False,
@@ -121,8 +122,11 @@ class PlotCorner:
         unit_scale : dict {param_index: scale_factor}, optional
             Multiply specific parameter columns before plotting.
             E.g. ``{3: 3600}`` converts column 3 from degrees to arcsec.
-        save_output : str, optional
-            Directory to save the PDF. Filename derived from pickle basename.
+        save_plots : bool
+            Save the figure to disk.
+        output_dir : str, optional
+            Directory to save the PDF. Defaults to
+            ``../plots/VisualizeEszee/{TARGET}/corner/``.
         use_style : bool
             Apply the thesis mplstyle if available.
         n_sigma_range : float
@@ -205,10 +209,14 @@ class PlotCorner:
         title = os.path.basename(filename) + evidence_str
         fig.suptitle(title, fontsize=9, y=1.01)
 
-        if save_output is not None:
-            os.makedirs(save_output, exist_ok=True)
+        if save_plots:
+            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+            _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
+            if output_dir is None:
+                output_dir = f'../plots/VisualizeEszee/{_safe_target}/corner/'
+            os.makedirs(output_dir, exist_ok=True)
             out_path = os.path.join(
-                save_output, os.path.basename(filename) + '_corner.pdf'
+                output_dir, _prefix + os.path.basename(filename) + '_corner.pdf'
             )
             fig.savefig(out_path, bbox_inches='tight')
             print(f"Saved: {out_path}")

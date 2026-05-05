@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import Ellipse
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from ..utils.utils import get_map_beam_and_pix, extract_plane
+from ..utils.utils import get_map_beam_and_pix, extract_plane, smooth, JyBeamToJyPix
 from ..utils.style import setup_plot_style
 
 
@@ -36,11 +36,12 @@ class PlotMaps:
 
     def plot_map(self, model_name: str, data_name: str, types, *, field=None, spw=None,
                  cmap: str = 'RdBu_r', save_plots: bool = False, return_fig: bool = False,
-                 output_dir: str = '../plots/maps/', use_style: bool = True,
+                 output_dir: str | None = None, use_style: bool = True,
                  filename: Optional[str] = None, taper: float | None = None,
                  aspect: str = 'equal',
                  fov: float | None = None,
                  center: Tuple[float, float] | None = None,
+                 show_neg_contours: bool = True,
                  **imshow_kwargs):
         """Plot one or multiple map types in a single row.
 
@@ -58,6 +59,10 @@ class PlotMaps:
         center : (ra_deg, dec_deg) or None
             Sky coordinate at the centre of the cropped view.
             Defaults to the image centre (CRVAL1/2) when fov is set.
+        show_neg_contours : bool
+            Overlay negative sigma contours on the ``deconvolved`` panel when
+            an RMS estimate is available (stored by ``JvM_clean``).
+            Levels are -1σ, -3σ, -5σ, … down to vmin (step of 2σ).
         """
 
         def _add_beam(ax, header):
@@ -209,6 +214,39 @@ class PlotMaps:
             if name != 'input' and vmin is not None:
                 im_kwargs.update(vmin=vmin, vmax=vmax)
             im = ax.imshow(arr, **im_kwargs, **imshow_kwargs)
+
+            if show_neg_contours and name == 'deconvolved':
+                _std = mm_entry.get('std')
+                if _std is not None and _std > 0:
+                    panel_vmin = np.nanmin(arr)
+                    neg_levels = []
+                    k = 2
+                    while -k * _std >= panel_vmin:
+                        neg_levels.append(-k * _std)
+                        k += 2
+                    if neg_levels:
+                        _levels_asc = neg_levels[::-1]
+                        ax.contour(arr, levels=_levels_asc,
+                                   colors='white', linestyles='-',
+                                   linewidths=0.5, alpha=0.8)
+                        _jvm_sigma = mm_entry.get('jvm_sigma')
+                        if _jvm_sigma is not None and ds_entry is not None:
+                            _entry = ds_entry[fkey][skey]
+                            _model_jypix, _ = self._convert_model_map_to_jypix(model_name, _entry)
+                            _, _, _ipix, _jpix = get_map_beam_and_pix(_entry.get('header', {}))
+                            _bmaj, _bmin, _, _ = get_map_beam_and_pix(_entry.get('header', {}))
+                            _pb = extract_plane(_entry.get('pbeam_data'))
+                            _pb_safe = np.where(_pb == 0.0, 1.0, _pb)
+                            _factor = JyBeamToJyPix(_ipix, _jpix, float(_bmaj), float(_bmin))
+                            _model_jybeam = (_model_jypix / _pb_safe) / _factor
+                            _smoothed_beam = smooth(_model_jybeam, _jvm_sigma)
+                            _dn_list = list(data_name) if isinstance(data_name, (list, tuple)) else [data_name]
+                            _pb_combined = self._get_field_averaged_pb(model_name, _dn_list, _dn_list[0], fkey, skey)
+                            _smoothed = _smoothed_beam * _pb_combined
+                            ax.contour(extract_plane(_smoothed), levels=_levels_asc,
+                                       colors='black', linestyles='-',
+                                       linewidths=0.5, alpha=0.7)
+
             ax.set_title(name)
             try:
                 ax.set_aspect(aspect)
@@ -235,8 +273,12 @@ class PlotMaps:
 
         plt.tight_layout()
         if save_plots:
+            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+            _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
+            if output_dir is None:
+                output_dir = f'../plots/VisualizeEszee/{_safe_target}/maps/'
             os.makedirs(output_dir, exist_ok=True)
-            out = filename or f"maps_{model_name}_{data_name}_{fkey}_{skey}_{'_'.join(map_types)}.png"
+            out = filename or f"{_prefix}maps_{model_name}_{data_name}_{fkey}_{skey}_{'_'.join(map_types)}.png"
             fig.savefig(os.path.join(output_dir, out), dpi=300, bbox_inches='tight')
         if return_fig:
             return fig, axes

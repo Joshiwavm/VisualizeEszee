@@ -115,14 +115,18 @@ class Deconvolve:
         concat_dn = "+".join(data_names)
         assoc = self.matched_models[model_name].setdefault(concat_dn, {})
         assoc['deconvolved'] = jvm_image.astype(np.float32)
+        assoc['jvm_sigma'] = sigma
         assoc['std'] = std
         assoc['header'] = header          # smallest-beam header (pixel scale for plot_map)
         assoc['pixel_scale_deg'] = pixel_scale_deg
 
         if save_output is not None:
-            os.makedirs(save_output, exist_ok=True)
+            jvm_dir = os.path.join(save_output, 'jvm')
+            os.makedirs(jvm_dir, exist_ok=True)
             h = header.copy(); h['BUNIT'] = 'Jy/beam'; h['HISTORY']='JvM-cleaned image'; h['rms']=(std, 'Jy/beam')
-            fname = os.path.join(save_output, f"{model_name}_{concat_dn}_{best_field}_{best_spw}_JvM_clean.fits")
+            _safe_target = str(getattr(self, 'target', None) or '').replace(' ', '_')
+            _prefix = f"{_safe_target}_" if _safe_target else ''
+            fname = os.path.join(jvm_dir, f"{_prefix}{model_name}_{concat_dn}_{best_field}_{best_spw}_JvM_clean.fits")
             print(f"Writing JvM-cleaned image to {fname}")
             fits.writeto(fname, jvm_image.astype(np.float32), header=h, overwrite=True)
 

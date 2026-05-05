@@ -263,7 +263,7 @@ class PlotPointSourceSpectra:
 
     def plot_point_source_spectra(self, ps_list, data_names, model_name,
                                   aperture_arcsec=10.0, save_plots=False,
-                                  output_dir='../plots/ps_spectra/',
+                                  output_dir=None,
                                   use_style=True, return_fig=False,
                                   n_model_pts=300, log_log=True,
                                   plot_maps=False,
@@ -324,8 +324,12 @@ class PlotPointSourceSpectra:
         plt.tight_layout()
 
         if save_plots:
+            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+            _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
+            if output_dir is None:
+                output_dir = f'../plots/VisualizeEszee/{_safe_target}/ps_spectra/'
             os.makedirs(output_dir, exist_ok=True)
-            fname = os.path.join(output_dir, 'ps_spectra.png')
+            fname = os.path.join(output_dir, f'{_prefix}ps_spectra.png')
             plt.savefig(fname, dpi=300, bbox_inches='tight')
             print(f"Saved: {fname}")
 

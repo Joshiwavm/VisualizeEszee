@@ -85,19 +85,23 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
     # Output writer helper
     # ------------------------------------------------------------------
     def _save_match_outputs(self, model_name, data_name, field_key, spw_key, assoc, save_output, taper):
-        os.makedirs(save_output, exist_ok=True)
+        match_model_dir = os.path.join(save_output, 'match_model')
+        os.makedirs(match_model_dir, exist_ok=True)
 
         # Map & vis entries
         entry = assoc['maps'][field_key][spw_key]
         sm_entry = assoc['sampled_model'][field_key][spw_key]
         header = entry['header'].copy()
 
+        _safe_target = str(getattr(self, 'target', None) or '').replace(' ', '_')
+        _prefix = f"{_safe_target}_" if _safe_target else ''
+
         # Recover Compton-y (remove PB attenuation)
         y_map = extract_plane(entry['model_data'])  # (y * PB)
 
         # Write Compton-y FITS
         header_y = header.copy(); header_y['BUNIT'] = 'Compton-y'
-        fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_y.fits"), y_map.astype(np.float32), header=header_y, overwrite=True)
+        fits.writeto(os.path.join(match_model_dir, f"{_prefix}{model_name}_{data_name}_{field_key}_{spw_key}_y.fits"), y_map.astype(np.float32), header=header_y, overwrite=True)
 
         # Build dirty images (model & residual) from visibilities
         uvrec = self.uvdata[data_name][field_key][spw_key]
@@ -111,10 +115,10 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
         # Write dirty images (Jy/beam)
         header_dm = header.copy(); header_dm['BUNIT'] = 'Jy/beam'
         header_dr = header.copy(); header_dr['BUNIT'] = 'Jy/beam'
-        print(f"Writing {model_name}_{data_name}_{field_key}_{spw_key} to {save_output}")
+        print(f"Writing {_prefix}{model_name}_{data_name}_{field_key}_{spw_key} to {match_model_dir}")
 
-        fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits"), dirty_model.astype(np.float32), header=header_dm, overwrite=True)
-        fits.writeto(os.path.join(save_output, f"{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits"), dirty_resid.astype(np.float32), header=header_dr, overwrite=True)
+        fits.writeto(os.path.join(match_model_dir, f"{_prefix}{model_name}_{data_name}_{field_key}_{spw_key}_dirty_model.fits"), dirty_model.astype(np.float32), header=header_dm, overwrite=True)
+        fits.writeto(os.path.join(match_model_dir, f"{_prefix}{model_name}_{data_name}_{field_key}_{spw_key}_dirty_resid.fits"), dirty_resid.astype(np.float32), header=header_dr, overwrite=True)
 
         # Persist computed maps inside in-memory structure for easier reuse
         entry['dirty_model'] = dirty_model.astype(np.float32)
