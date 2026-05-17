@@ -527,46 +527,58 @@ class FourierManager:
         spec_scale = (freq / ref_freq) ** spec_index
         return offset + pb_factor * amplitude * spec_scale * phase
 
-    def apply_point_source_correction(self, model_name: str, data_name: str,
-                                      ps_list: list) -> None:
+    def apply_point_source_correction(self, data_name: str, ps_list) -> None:
         """Subtract point-source contributions from residual visibilities.
 
-        Call this *after* match_model() to remove frozen point-source
-        components from the residuals so that JvM_clean() and plot_map()
-        show SZ-only residuals.
-
-        Applied in-place to 'resid_vis' in
-        ``self.matched_models[model_name][data_name]['sampled_model']``
-        for every field/spw pair.
+        Call this *after* match_model(). Applies to uvdata (once) and to
+        resid_vis in every matched model for data_name.
 
         Parameters
         ----------
-        model_name : str
-            Key in self.matched_models.
         data_name : str
-            Key in self.matched_models[model_name].
-        ps_list : list of dict
-            Output of get_point_sources_from_pickle().
+            Dataset key (must be in self.uvdata and self.matched_models).
+        ps_list : PointSourceList or list of dict
+            Output of get_point_sources_from_pickle(). If it has a .calib
+            attribute, the calib scalar for data_name is taken from that list
+            using the same order as add_data was called.
         """
         if not ps_list:
             return
 
-        model_name = self._resolve_model_name(model_name)
-        sm   = self.matched_models[model_name][data_name].get('sampled_model', {})
-        maps = self.matched_models[model_name][data_name].get('maps', {})
+        # Calib scalar: use ps_list.calib indexed by add_data order
+        calib_factor = 1.0
+        if hasattr(ps_list, 'calib') and ps_list.calib:
+            data_names_ordered = [k for k in self.uvdata if k != 'metadata']
+            try:
+                idx = data_names_ordered.index(data_name)
+                calib_factor = float(ps_list.calib[idx])
+            except (ValueError, IndexError):
+                pass
 
-        for field_key, spw_map in sm.items():
-            for spw_key, entry in spw_map.items():
-                u    = entry['u']
-                v    = entry['v']
-                freq = entry['uvfreq']
+        # Use any matched model as reference for field/spw structure and maps
+        ref_model = next(
+            (mn for mn in self.matched_models
+             if data_name in self.matched_models[mn]
+             and 'sampled_model' in self.matched_models[mn][data_name]),
+            None
+        )
+        if ref_model is None:
+            return
 
-                # Phase centre for this field
+        ref_sm   = self.matched_models[ref_model][data_name]['sampled_model']
+        ref_maps = self.matched_models[ref_model][data_name].get('maps', {})
+
+        for field_key, spw_map in ref_sm.items():
+            for spw_key, ref_entry in spw_map.items():
+                u    = ref_entry['u']
+                v    = ref_entry['v']
+                freq = ref_entry['uvfreq']
+
                 pc = self.uvdata[data_name].get(field_key, {}).get('phase_center', (0.0, 0.0))
                 crval1, crval2 = float(pc[0]), float(pc[1])
 
-                # Build PB spline for this field/spw — mirrors eszee data.py construction
-                pb_entry = maps.get(field_key, {}).get(spw_key, {})
+                # Build PB spline once for this field/spw
+                pb_entry = ref_maps.get(field_key, {}).get(spw_key, {})
                 pbeam_spline = None
                 if 'pbeam_data' in pb_entry and 'header' in pb_entry:
                     pb2d = np.squeeze(pb_entry['pbeam_data'])
@@ -577,10 +589,9 @@ class FourierManager:
                         pb2d, kx=1, ky=1, s=0
                     )
 
-                # Accumulate total PS contribution for this field/spw
+                # Compute ps_vis_total once (expensive — PB + NUFFT per PS)
                 ps_vis_total = np.zeros(len(u), dtype=np.complex128)
                 for ps in ps_list:
-                    # Evaluate PB at PS position — mirrors eszee main.py
                     pb_factor = 1.0
                     if pbeam_spline is not None:
                         hdr = pb_entry['header']
@@ -603,17 +614,20 @@ class FourierManager:
                         pb_factor=pb_factor,
                     )
 
-                # Scale PS by calibration scalar: in eszee, PS are part of
-                # (extended + ps) * calib, so residual = data - (extended + ps) * calib
-                calib_factor = entry.get('calib', 1.0)
                 ps_vis_scaled = ps_vis_total * calib_factor
 
-                entry['resid_vis'] = entry['resid_vis'] - ps_vis_scaled
+                # Update uvdata once (shared across models)
+                uvdata_key = (data_name, field_key, spw_key)
+                if uvdata_key not in self._ps_corrected_uvdata:
+                    old = self.uvdata[data_name][field_key][spw_key]
+                    self.uvdata[data_name][field_key][spw_key] = old._replace(
+                        uvreal=old.uvreal - ps_vis_scaled.real,
+                        uvimag=old.uvimag - ps_vis_scaled.imag,
+                    )
+                    self._ps_corrected_uvdata.add(uvdata_key)
 
-                # Also update the raw uvdata so downstream plots (e.g. radial
-                # distributions) automatically see PS-subtracted visibilities.
-                old = self.uvdata[data_name][field_key][spw_key]
-                self.uvdata[data_name][field_key][spw_key] = old._replace(
-                    uvreal=old.uvreal - ps_vis_scaled.real,
-                    uvimag=old.uvimag - ps_vis_scaled.imag,
-                )
+                # Update resid_vis for all matched models (cheap — scalar multiply done)
+                for mn in self.matched_models:
+                    model_sm = self.matched_models[mn].get(data_name, {}).get('sampled_model', {})
+                    if field_key in model_sm and spw_key in model_sm[field_key]:
+                        model_sm[field_key][spw_key]['resid_vis'] -= ps_vis_scaled

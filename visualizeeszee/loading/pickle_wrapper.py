@@ -11,6 +11,13 @@ ESZEE_REF_FREQ:  float = 1e11  # 100 GHz in Hz
 ESZEE_REF_FREQ2: float = 4e10  #  40 GHz in Hz
 
 
+class PointSourceList(list):
+    """List of PS dicts with a .calib attribute (one calib scalar per dataset, in add_data order)."""
+    def __init__(self, sources: list, calib: list):
+        super().__init__(sources)
+        self.calib = calib
+
+
 class LoadPickles:
     # Model type aliases: eszee internal names that share YAML param layout
     _MODEL_TYPE_ALIASES: dict = {
@@ -328,9 +335,13 @@ class LoadPickles:
                 entry['ref_freq2']   = ESZEE_REF_FREQ2
             ps_list.append(entry)
 
-        # Cache on self so summary() can display them
-        self.point_sources = ps_list
-        return ps_list
+        # Extract median calib scalars (one per dataset, in eszee/add_data order)
+        calibs = self._read_calibrations(quantile_array)
+        calib_list = calibs[0] if calibs else []
+
+        result = PointSourceList(ps_list, calib_list)
+        self.point_sources = result
+        return result
 
     def _read_fixedvalues(self, ) -> Dict[str, Any]:
         """

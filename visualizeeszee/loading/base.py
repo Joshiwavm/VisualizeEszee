@@ -62,6 +62,9 @@ class Loader(DataHandler, ModelHandler, LoadPickles, MapMaking):
         def is_interf(d):
             return self.uvdata[d].get('metadata', {}).get('obstype','').lower() == 'interferometer'
         
+        # Reset PS-corrected uvdata tracking — resid_vis will be recomputed
+        self._ps_corrected_uvdata = set()
+
         model_list = list(self.models.keys()) if model_name is None else [model_name]
         if not model_list:
             raise ValueError("No models available to match.")

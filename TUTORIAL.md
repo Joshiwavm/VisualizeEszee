@@ -117,9 +117,9 @@ ps_list = pm.get_point_sources_from_pickle(fname)
 pm.plot_point_source_spectra(ps_list, data_names=['Band1_12m', 'Band3_12m', 'Band3_07m'],
                              model_name='fit_q0.5', plot_maps=True, aperture_arcsec=10.0)
 
-# Subtract from resid_vis (in-place, per dataset)
-for dname in ['Band1_12m', 'Band3_12m', 'Band3_07m']:
-    pm.apply_point_source_correction('fit_q0.5', dname, ps_list)
+# Subtract from uvdata (once) and all matched model resid_vis — same order as add_data
+for dname in ['Band3_07m', 'Band3_12m', 'Band1_12m']:
+    pm.apply_point_source_correction(dname, ps_list)
 ```
 
 > **Warning:** `apply_point_source_correction` modifies `resid_vis` in-place.
@@ -207,8 +207,8 @@ pm.summary()
 ps_list = pm.get_point_sources_from_pickle(fname)
 pm.plot_point_source_spectra(ps_list, data_names=['Band1_12m','Band3_12m','Band3_07m'],
                              model_name='fit_q0.5', plot_maps=True)
-for dname in ['Band1_12m', 'Band3_12m', 'Band3_07m']:
-    pm.apply_point_source_correction('fit_q0.5', dname, ps_list)
+for dname in ['Band3_07m', 'Band3_12m', 'Band1_12m']:   # same order as add_data
+    pm.apply_point_source_correction(dname, ps_list)
 
 for dname in ['Band3_07m', 'Band3_12m', 'Band1_12m']:
     for fid in ['0', '1']:

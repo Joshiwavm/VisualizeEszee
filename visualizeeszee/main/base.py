@@ -26,6 +26,7 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
         self.models = {}
         self.matched_models = {}
         self.point_sources = []   # populated by get_point_sources_from_pickle()
+        self._ps_corrected_uvdata: set = set()  # (data_name,) keys already PS-subtracted in uvdata
 
         # Initialise loader which sets up data and model handlers
         Loader.__init__(self)
