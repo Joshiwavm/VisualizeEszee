@@ -17,6 +17,8 @@ setup(
         'reproject',
         'jax',
         'jax_finufft',
+        'pandas',
+        'tqdm',
     ],
     include_package_data=True,
     python_requires='>=3.10',
