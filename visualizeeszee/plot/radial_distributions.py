@@ -1,3 +1,4 @@
+import re
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
@@ -5,6 +6,26 @@ import os
 
 from ..utils.style import setup_plot_style
 from ..utils.utils import arcsec_to_uvdist, uvdist_to_arcsec
+
+
+def _group_quantile_models(model_entries):
+    """Group (model_name, spw) entries by base name and quantile.
+
+    Returns {base_name: {q_float_or_None: (full_name, spw)}}.
+    Entries without a _q{val} suffix are stored under key None.
+    """
+    groups = {}
+    for mname, spw in model_entries:
+        m = re.search(r'_q([\d.]+)$', mname)
+        if m:
+            base = mname[:m.start()]
+            q = float(m.group(1))
+        else:
+            base = mname
+            q = None
+        groups.setdefault(base, {})[q] = (mname, spw)
+    return groups
+
 
 class PlotRadialDistributions:
 
@@ -147,6 +168,16 @@ class PlotRadialDistributions:
             raise ValueError("axis must be 'u' or 'v'")
 
         model_vis = self.sample_uv(uv_grid, u_samples, v_samples, du, dRA=0.0, dDec=0.0)
+
+        # Apply calibration scale stored by sample_fft for this model/dataset/field/spw
+        calib = (self.matched_models.get(model_name, {})
+                 .get(data_name, {})
+                 .get('sampled_model', {})
+                 .get(field_key, {})
+                 .get(spw_key, {})
+                 .get('calib', 1.0))
+        model_vis = model_vis * calib
+
         shift_vis = self.phase_shift(model_vis.real + 1j * model_vis.imag,
                                      u_samples, v_samples,
                                      dRA_rad, dDec_rad)
@@ -156,11 +187,84 @@ class PlotRadialDistributions:
 
         return k_vals_final, real_line, imag_line
 
+    def _get_binned_residuals(self, band_name, model_name, nbins=20,
+                              custom_phase_center=None, log_bins=False):
+        """Bin (data − model) residual visibilities radially for the central field.
+
+        Uses sampled_model[field][spw]['resid_vis'] which is calibration-aware
+        (the same residuals fed into JvM_clean).
+        """
+        model_name = self._resolve_model_name(model_name)
+        central_field = self._find_central_field(band_name)
+        if custom_phase_center is not None:
+            ra_c  = float(np.atleast_1d(custom_phase_center[0])[0])
+            dec_c = float(np.atleast_1d(custom_phase_center[1])[0])
+            central_phase_center = (ra_c, dec_c)
+        else:
+            central_phase_center = self.uvdata[band_name][central_field]['phase_center']
+
+        sampled = (self.matched_models
+                   .get(model_name, {})
+                   .get(band_name, {})
+                   .get('sampled_model', {}))
+        if not sampled or central_field not in sampled:
+            raise ValueError(
+                f"No sampled_model for {model_name}/{band_name}/{central_field}. "
+                "Run match_model() first."
+            )
+
+        field_phase_center = self.uvdata[band_name][central_field]['phase_center']
+        dRA_rad  = (np.deg2rad(central_phase_center[0] - field_phase_center[0])
+                    * np.cos(np.deg2rad(0.5 * (central_phase_center[1] + field_phase_center[1]))))
+        dDec_rad = np.deg2rad(central_phase_center[1] - field_phase_center[1])
+
+        all_re, all_im, all_dist, all_w = [], [], [], []
+        for spw_name, spw_s in sampled[central_field].items():
+            resid = np.asarray(spw_s.get('resid_vis', []))
+            u     = np.asarray(spw_s.get('u', []))
+            v     = np.asarray(spw_s.get('v', []))
+            w     = np.asarray(spw_s.get('weights', []))
+            if resid.size == 0:
+                continue
+            shifted = self.phase_shift(resid, u, v, dRA_rad, dDec_rad)
+            uvdist  = np.sqrt(u**2 + v**2)
+            all_re.append(shifted.real);  all_im.append(shifted.imag)
+            all_dist.append(uvdist);      all_w.append(w)
+
+        UVreals  = np.concatenate(all_re);   UVimags = np.concatenate(all_im)
+        UVdist   = np.concatenate(all_dist); UVwghts = np.concatenate(all_w)
+
+        UVdist_pos = UVdist[UVdist > 0]
+        if log_bins:
+            bin_edges = np.logspace(np.log10(UVdist_pos.min()), np.log10(UVdist_pos.max()), nbins)
+        else:
+            UVdist_sorted = np.sort(UVdist_pos)
+            idx = np.linspace(0, len(UVdist_sorted) - 1, nbins, dtype=int)
+            bin_edges = UVdist_sorted[idx]
+
+        n_bins = nbins - 1
+        UVrealbinned = np.full(n_bins, np.nan); UVrealerrors = np.full(n_bins, np.nan)
+        UVimagbinned = np.full(n_bins, np.nan); UVimagerrors = np.full(n_bins, np.nan)
+        bin_cs = np.full(n_bins, np.nan)
+
+        for i in range(n_bins):
+            mask = (UVdist > bin_edges[i]) & (UVdist <= bin_edges[i + 1])
+            if mask.sum() == 0:
+                continue
+            UVrealbinned[i], sw_re = np.average(UVreals[mask], weights=UVwghts[mask], returned=True)
+            UVimagbinned[i], sw_im = np.average(UVimags[mask], weights=UVwghts[mask], returned=True)
+            UVrealerrors[i] = sw_re**(-0.5)
+            UVimagerrors[i] = sw_im**(-0.5)
+            bin_cs[i] = np.median(UVdist[mask])
+
+        return UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_cs
+
     # ----------------- Plotting scripts ------------------------
 
     def _plot_single_radial_distribution(self, UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors,
                                        bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
-                                       label_imag: bool = True, show_label: bool = True, **kwargs):
+                                       label_imag: bool = True, show_label: bool = True,
+                                       ylim_real=(-4, 0.6), ylim_imag=(-0.4, 0.4), **kwargs):
         """
         Create a single radial distribution plot.
         
@@ -214,7 +318,8 @@ class PlotRadialDistributions:
             ax.tick_params(axis='x', which='both', top=False)
 
         # Set axis limits
-        ax.set_ylim(-4, 0.6)
+        if ylim_real is not None:
+            ax.set_ylim(*ylim_real)
         ax.set_xlim(1e0, 2e1)
 
         ax.set_xscale('log')
@@ -244,7 +349,8 @@ class PlotRadialDistributions:
                    **errorbar_kwargs_imag)
 
         ax.axhline(0, ls='dashed', c='gray', alpha=0.7)
-        ax.set_ylim(-0.4, 0.4)
+        if ylim_imag is not None:
+            ax.set_ylim(*ylim_imag)
         ax.set_xlim(1e0, 2e1)
 
         ax.set_ylabel('Imag(V) [mJy]', fontsize=9)
@@ -263,23 +369,48 @@ class PlotRadialDistributions:
 
     def plot_radial_distributions(self, nbins=20, save_plots=True, output_dir=None,
                                 custom_phase_center=None, use_style=True, data_name: str | None = None,
-                                model_name: str | None = None,
-                                n_model_pts: int = 500, r_min_k: float = 1, r_max_k: float = 20.0,
+                                model_name: str | list[str] | None = None,
+                                n_model_pts: int = 1500, r_min_k: float = 0.1, r_max_k: float = 30.0,
                                 axis: str = 'v',
                                 separate_legends: bool = True,
                                 return_fig: bool = False,
                                 show_label: bool = True,
                                 log_bins: bool = False,
+                                residual_model: str | None = None,
+                                show_bands: bool = True,
+                                data_zorder: dict | None = None,
                                 **kwargs):
         """
         Plot radial UV distributions.
 
         If data_name is provided, only that dataset is plotted; otherwise all datasets.
+
+        Parameters
+        ----------
+        residual_model : str or None
+            When set, plot (data − model) residuals in uv-space instead of raw data.
+            The named model is subtracted from the data using the calibration-aware
+            residual visibilities already stored by match_model().
+            All other model curves are also shown relative to this reference
+            (each curve − reference_curve), so the reference model appears as a
+            zero line and deviations highlight differences between models.
         """
+        if model_name is not None:
+            if isinstance(model_name, str):
+                model_name = [self._resolve_model_name(model_name)]
+            else:
+                model_name = [self._resolve_model_name(n) for n in model_name]
+            # Also include base names so quantile-suffixed keys match
+            _model_name_set = set(model_name) | {re.sub(r'_q[\d.]+$', '', n) for n in model_name}
+        else:
+            _model_name_set = None
+        if residual_model is not None:
+            residual_model = self._resolve_model_name(residual_model)
+
         # Setup plot style if requested
         if use_style:
             style_applied = setup_plot_style()
-            
+
         if save_plots:
             _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
             if output_dir is None:
@@ -307,59 +438,166 @@ class PlotRadialDistributions:
         fig, axes = plt.subplots(2, 1, sharex=True, figsize=(4, 5),
                                  gridspec_kw={'height_ratios': [4, 1], 'hspace': 0.0})
 
+        ylim_real_arg = (-4, 0.6) if residual_model is None else (-1.3, 1)
+        ylim_imag_arg = (-0.4, 0.4) if residual_model is None else None
+
         # Data plotting -------------------------------------------------
         color_idx = 0
         data_handles = []
         for i, name in enumerate(dataset_names):
             current_nbins = nbins_list[i]
-            UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_centers = self._get_binned_uvdatapoints(
-                name, current_nbins, custom_phase_center, log_bins=log_bins,
-            )
+            if residual_model is not None:
+                UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_centers = \
+                    self._get_binned_residuals(name, residual_model, current_nbins,
+                                              custom_phase_center, log_bins=log_bins)
+            else:
+                UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors, bin_edges, bin_centers = \
+                    self._get_binned_uvdatapoints(name, current_nbins, custom_phase_center, log_bins=log_bins)
+            _zorder = (data_zorder.get(name, i + 2) if data_zorder is not None else i + 2)
             h_real = self._plot_single_radial_distribution(
                 UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors,
                 bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
-                label_imag=False, show_label=show_label, **kwargs
+                label_imag=False, show_label=show_label,
+                ylim_real=ylim_real_arg, ylim_imag=ylim_imag_arg,
+                zorder=_zorder, **kwargs
             )
             data_handles.append(h_real)
             color_idx += 1
 
+        # Update y-labels to show residual context
+        if residual_model is not None:
+            _ref_short = residual_model.split('_q')[0] if '_q' in residual_model else residual_model
+            axes[0].set_ylabel(fr'Re(V $-$ V$_{{\rm {_ref_short}}}$) [mJy]', fontsize=9)
+            axes[1].set_ylabel(fr'Im(V $-$ V$_{{\rm {_ref_short}}}$) [mJy]', fontsize=9)
+
         # Model overlays -----------------------------------------------
-        # This is not taking into account calibration parameter.
         model_linestyles_map = {}
+        model_hatches_map = {}
         if hasattr(self, 'matched_models') and hasattr(self, 'fft_map') and hasattr(self, 'sample_uv'):
             base_linestyles = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 2)), (0, (1, 1)), (0, (5, 1, 1, 1))]
-            
-            # Loop over datasets for model overlays (parallel to data plotting)
+            base_hatches    = ['/', '\\', '|', '-', '+', 'x', 'o', '.']
+
             for i, name in enumerate(dataset_names):
                 central_field = self._find_central_field(name)
                 dataset_color = f"C{i % 10}"
 
-                # Collect and plot candidate models
+                # Collect candidate models; match by full name or base name
                 model_entries = []
                 for m, mdat in getattr(self, 'matched_models', {}).items():
                     if name in mdat and central_field in mdat[name].get('maps', {}) and mdat[name]['maps'][central_field]:
-                        if model_name is None or m == model_name:
+                        _base_m = re.sub(r'_q[\d.]+$', '', m)
+                        if _model_name_set is None or m in _model_name_set or _base_m in _model_name_set:
                             first_spw = next(iter(mdat[name]['maps'][central_field].keys()))
                             model_entries.append((m, first_spw))
 
-                if model_name is not None and not model_entries:
-                    print(f"Model '{model_name}' not available for central field '{central_field}'; skipping model curves.")
+                if _model_name_set is not None and not model_entries:
+                    print(f"Models {list(_model_name_set)} not available for central field '{central_field}'; skipping model curves.")
 
-                for mi, (mname, spw_used) in enumerate(model_entries):
-                    # Assign linestyle if not already set
-                    if mname not in model_linestyles_map:
-                        style_idx = len(model_linestyles_map)
-                        model_linestyles_map[mname] = base_linestyles[style_idx % len(base_linestyles)]
-                    
-                    # Get model data and plot
-                    k_vals, real_line, imag_line = self._get_or_compute_model_slice(
-                        mname, name, central_field, spw_used,
+                # Pre-compute reference q50 slice for residual mode
+                ref_real = ref_imag = None
+                if residual_model is not None:
+                    _ref_maps = (self.matched_models.get(residual_model, {})
+                                 .get(name, {}).get('maps', {}))
+                    if central_field in _ref_maps and _ref_maps[central_field]:
+                        _ref_spw = next(iter(_ref_maps[central_field].keys()))
+                        _, ref_real, ref_imag = self._get_or_compute_model_slice(
+                            residual_model, name, central_field, _ref_spw,
+                            n_model_pts, r_min_k, r_max_k, axis,
+                            custom_phase_center=custom_phase_center,
+                        )
+                    else:
+                        print(f"residual_model '{residual_model}' not found for {name}/{central_field}; "
+                              "showing absolute model curves.")
+
+                # Pre-compute reference q16/q84 slices for error propagation
+                ref_slices = {}
+                if residual_model is not None and ref_real is not None:
+                    _ref_base = re.sub(r'_q[\d.]+$', '', residual_model)
+                    for _q_cand in [0.16, 0.84]:
+                        _ref_qname = f'{_ref_base}_q{_q_cand}'
+                        _rqmaps = (self.matched_models.get(_ref_qname, {})
+                                   .get(name, {}).get('maps', {}))
+                        if central_field in _rqmaps and _rqmaps[central_field]:
+                            _rqspw = next(iter(_rqmaps[central_field].keys()))
+                            _, _rr, _ri = self._get_or_compute_model_slice(
+                                _ref_qname, name, central_field, _rqspw,
+                                n_model_pts, r_min_k, r_max_k, axis,
+                                custom_phase_center=custom_phase_center,
+                            )
+                            ref_slices[_q_cand] = (_rr, _ri)
+                    ref_slices[0.5] = (ref_real, ref_imag)
+
+                # Model zorder always below the lowest data zorder
+                _model_zorder = (min(data_zorder.values()) - 1 if data_zorder else 0)
+
+                # Group entries by base model name and plot
+                grouped = _group_quantile_models(model_entries)
+                _ref_base_name = re.sub(r'_q[\d.]+$', '', residual_model) if residual_model else None
+
+                for base_name, q_dict in grouped.items():
+                    # Assign linestyle and hatch per base name
+                    if base_name not in model_linestyles_map:
+                        idx = len(model_linestyles_map)
+                        model_linestyles_map[base_name] = base_linestyles[idx % len(base_linestyles)]
+                        model_hatches_map[base_name]    = base_hatches[idx % len(base_hatches)]
+                    ls    = model_linestyles_map[base_name]
+                    hatch = model_hatches_map[base_name]
+
+                    # Identify median quantile key
+                    _q_keys = [q for q in q_dict if q is not None]
+                    q_med = min(_q_keys, key=lambda q: abs(q - 0.5)) if _q_keys else None
+                    mname_med, spw_med = q_dict[q_med] if q_med is not None else list(q_dict.values())[0]
+
+                    # Compute median slice
+                    k_vals, real_50, imag_50 = self._get_or_compute_model_slice(
+                        mname_med, name, central_field, spw_med,
                         n_model_pts, r_min_k, r_max_k, axis,
                         custom_phase_center=custom_phase_center,
                     )
 
-                    axes[0].plot(k_vals, real_line * 1e3, lw=1.5, ls=model_linestyles_map[mname], c=dataset_color, label='__nolegend__')
-                    axes[1].plot(k_vals, imag_line * 1e3, lw=1.5, ls=model_linestyles_map[mname], c=dataset_color, label='__nolegend__')
+                    # Subtract reference (residual mode)
+                    if residual_model is not None and ref_real is not None:
+                        real_plot = real_50 - ref_real
+                        imag_plot = imag_50 - ref_imag
+                    else:
+                        real_plot = real_50
+                        imag_plot = imag_50
+
+                    axes[0].plot(k_vals, real_plot * 1e3, lw=1.5, ls=ls, c=dataset_color, label='__nolegend__', zorder=_model_zorder)
+                    axes[1].plot(k_vals, imag_plot * 1e3, lw=1.5, ls=ls, c=dataset_color, label='__nolegend__', zorder=_model_zorder)
+
+                    # Quantile band (requires both q16 and q84)
+                    if 0.16 in q_dict and 0.84 in q_dict:
+                        _, real_16, imag_16 = self._get_or_compute_model_slice(
+                            q_dict[0.16][0], name, central_field, q_dict[0.16][1],
+                            n_model_pts, r_min_k, r_max_k, axis,
+                            custom_phase_center=custom_phase_center,
+                        )
+                        _, real_84, imag_84 = self._get_or_compute_model_slice(
+                            q_dict[0.84][0], name, central_field, q_dict[0.84][1],
+                            n_model_pts, r_min_k, r_max_k, axis,
+                            custom_phase_center=custom_phase_center,
+                        )
+
+                        _fb_kw = dict(alpha=0.15, facecolor=dataset_color,
+                                      edgecolor=dataset_color, hatch=hatch, linewidth=0.5,
+                                      zorder=_model_zorder)
+                        if show_bands:
+                            if residual_model is None or ref_real is None:
+                                # Absolute mode: direct quantile band
+                                axes[0].fill_between(k_vals, real_16 * 1e3, real_84 * 1e3, **_fb_kw)
+                                axes[1].fill_between(k_vals, imag_16 * 1e3, imag_84 * 1e3, **_fb_kw)
+                            else:
+                                # Residual mode: shift each model's q16/q84 by ref q50 only.
+                                # No quadrature error propagation — reduces scatter.
+                                axes[0].fill_between(k_vals,
+                                                     (real_16 - ref_real) * 1e3,
+                                                     (real_84 - ref_real) * 1e3,
+                                                     **_fb_kw)
+                                axes[1].fill_between(k_vals,
+                                                     (imag_16 - ref_imag) * 1e3,
+                                                     (imag_84 - ref_imag) * 1e3,
+                                                     **_fb_kw)
         else:
             if model_name is not None:
                 print("Model plotting requested but required attributes (matched_models, fft_map, sample_uv) missing.")

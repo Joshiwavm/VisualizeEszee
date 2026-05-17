@@ -466,13 +466,14 @@ class FourierManager:
         # store sampled model
         sm_store = self.matched_models[model_name][data_name].setdefault('sampled_model', {})
         sm_store.setdefault(field_key, {})[spw_key] = {
-            'model_vis': model_vis * calib,
+            'model_vis': model_vis,
             'data_vis': data_vis,
             'resid_vis': resid_vis,
             'u': u,
             'v': v,
             'uvfreq': freq,
-            'weights': wgt
+            'weights': wgt,
+            'calib': calib,
         }
         return model_vis
 
@@ -550,6 +551,7 @@ class FourierManager:
         if not ps_list:
             return
 
+        model_name = self._resolve_model_name(model_name)
         sm   = self.matched_models[model_name][data_name].get('sampled_model', {})
         maps = self.matched_models[model_name][data_name].get('maps', {})
 
@@ -601,13 +603,17 @@ class FourierManager:
                         pb_factor=pb_factor,
                     )
 
-                # resid_vis = data_vis - sz_model_vis - ps_vis
-                entry['resid_vis'] = entry['resid_vis'] - ps_vis_total
+                # Scale PS by calibration scalar: in eszee, PS are part of
+                # (extended + ps) * calib, so residual = data - (extended + ps) * calib
+                calib_factor = entry.get('calib', 1.0)
+                ps_vis_scaled = ps_vis_total * calib_factor
+
+                entry['resid_vis'] = entry['resid_vis'] - ps_vis_scaled
 
                 # Also update the raw uvdata so downstream plots (e.g. radial
                 # distributions) automatically see PS-subtracted visibilities.
                 old = self.uvdata[data_name][field_key][spw_key]
                 self.uvdata[data_name][field_key][spw_key] = old._replace(
-                    uvreal=old.uvreal - ps_vis_total.real,
-                    uvimag=old.uvimag - ps_vis_total.imag,
+                    uvreal=old.uvreal - ps_vis_scaled.real,
+                    uvimag=old.uvimag - ps_vis_scaled.imag,
                 )

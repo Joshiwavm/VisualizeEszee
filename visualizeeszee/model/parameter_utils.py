@@ -164,7 +164,7 @@ def _build_model_parameters(dist_cfg: Dict[str, Any], profgeom: str) -> Dict[str
         return _build_g17_parameters(params)
     if model_type == 'L15Pressure':
         return _build_l15_parameters(params)
-    if model_type == 'gnfwPressure':
+    if model_type in ('gnfwPressure', 'gnfwEmulator'):
         return _build_gnfw_parameters(params)
     raise ValueError(f"Unknown model type: {model_type}")
 

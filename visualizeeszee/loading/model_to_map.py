@@ -65,9 +65,10 @@ class MapMaking:
     def generate_model_from_parameters(model_type, parameters, ra_map, dec_map, header,
                                        rs=np.append(0.0, np.logspace(-5, 5, 100))):
         
+        _GNFW_TYPES = {'gnfwPressure', 'gnfwEmulator'}
         xform = TransformInput(parameters['model'], model_type)
         input_par = xform.run()
-        rs_sample = rs[1:] if model_type == 'gnfwPressure' else rs
+        rs_sample = rs[1:] if model_type in _GNFW_TYPES else rs
 
         if model_type == 'A10Pressure':
             profile = a10Profile(rs_sample,
@@ -81,7 +82,7 @@ class MapMaking:
                                  input_par['ap'],
                                  input_par['c500'],
                                  input_par['mass'])
-        elif model_type == 'gnfwPressure':
+        elif model_type in _GNFW_TYPES:
             profile = gnfwProfile(rs_sample,
                                   input_par.get('offset'),
                                   input_par['amp'],

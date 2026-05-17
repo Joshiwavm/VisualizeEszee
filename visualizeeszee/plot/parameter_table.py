@@ -6,6 +6,40 @@ import pandas as pd
 from typing import Dict, Sequence
 
 
+class ParameterTableResult:
+    """Container for make_parameter_table output.
+
+    Displays the nicely-formatted table in Jupyter notebooks.
+    Access ``.latex`` for the LaTeX-formatted DataFrame.
+
+    Attributes
+    ----------
+    display : pd.DataFrame
+        Human-readable table (unicode ±, no LaTeX markup).
+    latex : pd.DataFrame
+        LaTeX-formatted table (``$x^{+hi}_{-lo}$`` cells).
+    """
+
+    def __init__(self, display: pd.DataFrame, latex: pd.DataFrame):
+        self.display = display
+        self.latex = latex
+
+    def _repr_html_(self):
+        return self.display.style.set_properties(**{
+            'text-align': 'center',
+            'white-space': 'nowrap',
+        }).set_table_styles([
+            {'selector': 'th', 'props': [('text-align', 'center')]},
+            {'selector': 'th.row_heading', 'props': [('text-align', 'left')]},
+        ])._repr_html_()
+
+    def __repr__(self):
+        return self.display.__repr__()
+
+    def __str__(self):
+        return self.display.__str__()
+
+
 class PlotParameterTable:
     """Mixin providing get_parameter_table() and make_parameter_table() for Manager."""
 
@@ -47,8 +81,6 @@ class PlotParameterTable:
 
             vary_flags = list(vary_entry['values']['model'].get('vary', []))
             prefix = f'{model_type}_c{j_compt}.' if n_image > 1 else f'{model_type}.'
-
-            comp_dict = params[1][out_idx]['model'] if params[1] else {}
 
             for param_idx, key in enumerate(model_keys):
                 is_free = bool(vary_flags[param_idx]) if param_idx < len(vary_flags) else False
@@ -147,18 +179,29 @@ class PlotParameterTable:
         self,
         fnames: Dict[str, str],
         unit_scale: Dict[str, float] | None = None,
+        center: tuple[float, float] | None = None,
         save: bool = True,
         output_dir: str | None = None,
         sig_figs: int = 3,
         caption: str | None = None,
-    ) -> pd.DataFrame:
+    ) -> ParameterTableResult:
         """Build a multi-model parameter table suitable for LaTeX export.
+
+        Rows = model runs, columns = parameters.
+        Parameters from different model types sharing the same name (e.g. 'ra',
+        'alpha') are merged into a single column.  Parameters unique to one
+        model type (e.g. 'mass'/'c500' for A10, 'r_s' for gNFW) show '—' for
+        models that do not have them.
+
+        Also includes a Bayesian evidence column: Δln Z relative to the null
+        model, plus the effective significance σ = sgn(Δln Z) √(2|Δln Z|).
 
         Parameters
         ----------
         fnames : dict {label: fname}
-            Column header → pickle path.
+            Row label → pickle path.
         unit_scale : dict {param_name: factor}, optional
+            Scaling applied before formatting (merged with defaults).
         save : bool
             Save .csv and .tex files.
         output_dir : str, optional
@@ -168,49 +211,69 @@ class PlotParameterTable:
 
         Returns
         -------
-        pd.DataFrame
-            Rows = parameters, columns = model labels.
-            Cells: ``$x^{+hi}_{-lo}$`` (free) or ``$x$ (frozen)``.
+        ParameterTableResult
+            ``.display``: human-readable DataFrame (renders nicely in notebooks).
+            ``.latex``:   LaTeX-formatted DataFrame.
         """
-        # Default unit scaling applied before formatting (user unit_scale takes precedence)
-        _DEFAULT_SCALE = {'mass': 1e-14}
+        # Default unit scaling (user unit_scale takes precedence)
+        _DEFAULT_SCALE = {'mass': 1e-14, 'r_s': 3600}
         effective_scale = {**_DEFAULT_SCALE, **(unit_scale or {})}
 
-        # Parameters to exclude from the table
-        _SKIP_PARAMS = {'depth', 'log10', 'bias', 'redshift', 'alpha_p', 'temperature', 'offset'}
+        # Parameters to skip entirely
+        _SKIP_PARAMS = {'depth', 'log10', 'bias', 'redshift', 'alpha_p',
+                        'temperature', 'offset'}
+
+        # Canonical column order
+        _PARAM_ORDER = ['ra', 'dec', 'mass', 'p_norm', 'c500', 'r_s',
+                        'e', 'angle', 'alpha', 'beta', 'gamma']
 
         # Per-parameter format: decimal places (fixed notation)
         _PARAM_FMT: Dict[str, int] = {
-            'ra':    5,
-            'dec':   5,
+            'ra':    2,
+            'dec':   2,
             'mass':  2,
             'e':     2,
             'angle': 0,
         }
 
-        # Display names for the row index
-        _DISPLAY_NAMES: Dict[str, str] = {
-            'ra':     'RA',
-            'dec':    'Dec',
-            'mass':   r'M$_{500,c}$',
-            'c500':   r'c$_{500}$',
-            'e':      'e',
+        # LaTeX column headers
+        _LATEX_NAMES: Dict[str, str] = {
+            'ra':     r'$\Delta$RA ["$]$',
+            'dec':    r'$\Delta$Dec ["]',
+            'mass':   r'$M_{500,c}$',
+            'c500':   r'$c_{500}$',
+            'r_s':    r'$r_s$ ["]',
+            'e':      r'$e$',
             'angle':  'PA',
             'alpha':  r'$\alpha$',
             'beta':   r'$\beta$',
             'gamma':  r'$\gamma$',
-            'p_norm': r'p$_\text{norm}$',
+            'p_norm': r'$p_\mathrm{norm}$',
         }
 
-        # Parameters where a positive median gets a ~~ prefix for column alignment
-        _PAD_POSITIVE = {'ra'}
+        # Nice (non-LaTeX) column headers for notebook display
+        _NICE_NAMES: Dict[str, str] = {
+            'ra':     'ΔRA ["]',
+            'dec':    'ΔDec ["]',
+            'mass':   'M₅₀₀ [10¹⁴M☉]',
+            'c500':   'c₅₀₀',
+            'r_s':    'rₛ ["]',
+            'e':      'e',
+            'angle':  'PA',
+            'alpha':  'α',
+            'beta':   'β',
+            'gamma':  'γ',
+            'p_norm': 'p_norm',
+        }
+
+        _PAD_POSITIVE = set()
 
         def _fmt(x: float, key: str) -> str:
             if key in _PARAM_FMT:
                 return f'{x:.{_PARAM_FMT[key]}f}'
             return f'{x:.{sig_figs}g}'
 
-        def _cell(row: pd.Series, key: str) -> str:
+        def _cell_latex(row: pd.Series, key: str) -> str:
             pad = r'~~' if key in _PAD_POSITIVE and row['median'] >= 0 else ''
             if row['frozen']:
                 return f'${pad}{_fmt(row["median"], key)}$'
@@ -220,31 +283,121 @@ class PlotParameterTable:
                 f'_{{-{_fmt(row["err_lo"], key)}}}$'
             )
 
+        def _cell_nice(row: pd.Series, key: str) -> str:
+            val = row['median']
+            if np.isnan(val):
+                return '—'
+            fval = _fmt(val, key)
+            if row['frozen']:
+                return fval
+            hi, lo = row['err_hi'], row['err_lo']
+            # Use ± for errors that agree within 10 %
+            if (hi + lo) > 0 and abs(hi - lo) / (hi + lo) < 0.10:
+                avg = (hi + lo) / 2
+                return f'{fval} ± {_fmt(avg, key)}'
+            return f'{fval} (+{_fmt(hi, key)} / -{_fmt(lo, key)})'
+
+        # ------------------------------------------------------------------
+        # Load posteriors
+        # ------------------------------------------------------------------
         raw: Dict[str, pd.DataFrame] = {}
         for label, fname in fnames.items():
-            raw[label] = self._load_param_rows(fname, unit_scale=effective_scale)
+            df = self._load_param_rows(fname, unit_scale=effective_scale)
+            df = df[~df.index.str.startswith('calib.')]
+            df.index = pd.Index([p.split('.')[-1] for p in df.index], name='param')
+            df = df[~df.index.isin(_SKIP_PARAMS)]
+            df = df[~df.index.duplicated(keep='first')]
+            raw[label] = df
 
-        # Union of all parameter rows, preserving insertion order;
-        # exclude calibration scales and unwanted A10 parameters
-        all_params = list(dict.fromkeys(
+        # ------------------------------------------------------------------
+        # RA/Dec offset transform (arcsec, cos-corrected for RA)
+        # ------------------------------------------------------------------
+        # Determine phase centre: use supplied center or first entry's median RA/Dec
+        first_df = next(iter(raw.values()))
+        ra_center  = float(center[0]) if center is not None else (
+            float(first_df.loc['ra', 'median']) if 'ra' in first_df.index else 0.0
+        )
+        dec_center = float(center[1]) if center is not None else (
+            float(first_df.loc['dec', 'median']) if 'dec' in first_df.index else 0.0
+        )
+        cos_dec = float(np.cos(np.deg2rad(dec_center)))
+        print(f'RA/Dec offsets relative to center: RA={ra_center:.5f} deg, Dec={dec_center:.5f} deg')
+
+        for df in raw.values():
+            if 'ra' in df.index:
+                df.loc['ra', 'median'] = (df.loc['ra', 'median'] - ra_center) * cos_dec * 3600
+                df.loc['ra', 'err_lo'] *= cos_dec * 3600
+                df.loc['ra', 'err_hi'] *= cos_dec * 3600
+            if 'dec' in df.index:
+                df.loc['dec', 'median'] = (df.loc['dec', 'median'] - dec_center) * 3600
+                df.loc['dec', 'err_lo'] *= 3600
+                df.loc['dec', 'err_hi'] *= 3600
+
+        # ------------------------------------------------------------------
+        # Bayesian evidence per model
+        # ------------------------------------------------------------------
+        evidence: Dict[str, tuple[float, float]] = {}
+        for label, fname in fnames.items():
+            try:
+                r = np.load(fname, allow_pickle=True)
+                logz = float(np.asarray(r['samples']['logz'])[-1])
+                lognull = float(r['loglnull']) if 'loglnull' in r else 0.0
+                delta = logz - lognull
+                sigma = float(np.sign(delta) * np.sqrt(2.0 * abs(delta)))
+                evidence[label] = (delta, sigma)
+            except Exception:
+                evidence[label] = (np.nan, np.nan)
+
+        # ------------------------------------------------------------------
+        # Build parameter column order
+        # ------------------------------------------------------------------
+        all_seen = list(dict.fromkeys(
             p for df in raw.values() for p in df.index
-            if not p.startswith('calib.')
-            and p.split('.')[-1] not in _SKIP_PARAMS
         ))
+        ordered     = [p for p in _PARAM_ORDER if p in all_seen]
+        extras      = [p for p in all_seen if p not in set(ordered)]
+        final_params = ordered + extras
 
-        table: Dict[str, list] = {label: [] for label in fnames}
-        for param in all_params:
-            key = param.split('.')[-1]
-            for label, df in raw.items():
+        # ------------------------------------------------------------------
+        # Build both cell grids
+        # ------------------------------------------------------------------
+        latex_rows: Dict[str, list] = {lbl: [] for lbl in fnames}
+        nice_rows:  Dict[str, list] = {lbl: [] for lbl in fnames}
+
+        for param in final_params:
+            for lbl, df in raw.items():
                 if param in df.index:
-                    table[label].append(_cell(df.loc[param], key))
+                    latex_rows[lbl].append(_cell_latex(df.loc[param], param))
+                    nice_rows[lbl].append(_cell_nice(df.loc[param], param))
                 else:
-                    table[label].append('—')
+                    latex_rows[lbl].append('—')
+                    nice_rows[lbl].append('—')
 
-        display_index = [_DISPLAY_NAMES.get(p.split('.')[-1], p.split('.')[-1]) for p in all_params]
-        result = pd.DataFrame(table, index=display_index)
-        result.index.name = 'Parameter'
+        # Add evidence column
+        ev_latex_col_hdr = r'$\Delta\ln\mathcal{Z}\ (\sigma)$'
+        ev_nice_col_hdr  = 'ΔlnZ (σ)'
+        for lbl in fnames:
+            delta, sigma = evidence[lbl]
+            if np.isnan(delta):
+                latex_rows[lbl].append('—')
+                nice_rows[lbl].append('—')
+            else:
+                latex_rows[lbl].append(
+                    f'${delta:.1f}\\ ({sigma:.1f}\\sigma)$'
+                )
+                nice_rows[lbl].append(f'{delta:.1f} ({sigma:.1f}σ)')
 
+        latex_cols = [_LATEX_NAMES.get(p, p) for p in final_params] + [ev_latex_col_hdr]
+        nice_cols  = [_NICE_NAMES.get(p, p)  for p in final_params] + [ev_nice_col_hdr]
+
+        latex_df = pd.DataFrame(latex_rows, index=latex_cols).T
+        latex_df.index.name = 'Model'
+        nice_df  = pd.DataFrame(nice_rows,  index=nice_cols).T
+        nice_df.index.name  = 'Model'
+
+        # ------------------------------------------------------------------
+        # Save
+        # ------------------------------------------------------------------
         if save:
             _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
             if output_dir is None:
@@ -254,9 +407,9 @@ class PlotParameterTable:
             csv_path = os.path.join(output_dir, f'{_safe_target}_parameter_table.csv')
             tex_path = os.path.join(output_dir, f'{_safe_target}_parameter_table.tex')
 
-            result.to_csv(csv_path)
+            nice_df.to_csv(csv_path)
             _caption = caption if caption is not None else f'{_safe_target} model parameters'
-            result.to_latex(
+            latex_df.to_latex(
                 tex_path,
                 escape=False,
                 caption=_caption,
@@ -265,4 +418,4 @@ class PlotParameterTable:
             print(f'Saved: {csv_path}')
             print(f'Saved: {tex_path}')
 
-        return result
+        return ParameterTableResult(display=nice_df, latex=latex_df)

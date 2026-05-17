@@ -12,10 +12,16 @@ ESZEE_REF_FREQ2: float = 4e10  #  40 GHz in Hz
 
 
 class LoadPickles:
+    # Model type aliases: eszee internal names that share YAML param layout
+    _MODEL_TYPE_ALIASES: dict = {
+        'gnfwEmulator': 'gnfwPressure',
+    }
+
     # Helper: extract parameter order from YAML for a given model_type
     def get_param_order_from_yaml(self, model_type: str) -> Sequence[str]:
         import yaml
         from pathlib import Path
+        model_type = self._MODEL_TYPE_ALIASES.get(model_type, model_type)
         yml_path = Path(__file__).parent.parent / 'model' / 'brightness_models.yml'
         with open(yml_path, 'r') as f:
             config = yaml.safe_load(f)

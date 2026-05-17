@@ -20,6 +20,7 @@ class Deconvolve:
         """
         if model_name is None or data_name is None:
             raise ValueError("model_name and data_name must be provided for JvM_clean")
+        model_name = self._resolve_model_name(model_name)
         if model_name not in self.matched_models:
             raise ValueError(f"Model '{model_name}' not found in matched_models")
 
@@ -119,6 +120,7 @@ class Deconvolve:
         assoc['std'] = std
         assoc['header'] = header          # smallest-beam header (pixel scale for plot_map)
         assoc['pixel_scale_deg'] = pixel_scale_deg
+        assoc['best_dn'] = best_dn        # dataset whose grid the deconvolved image lives on
 
         if save_output is not None:
             jvm_dir = os.path.join(save_output, 'jvm')

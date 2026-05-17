@@ -1,3 +1,5 @@
+import re as _re
+
 from ..loading import Loader
 from ..plot import PlotGatherer
 from ..fourier import FourierManager, Deconvolve
@@ -27,6 +29,31 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
 
         # Initialise loader which sets up data and model handlers
         Loader.__init__(self)
+
+    # ------------------------------------------------------------------
+    # Model name resolution
+    # ------------------------------------------------------------------
+    def _resolve_model_name(self, name: str) -> str:
+        """Resolve a base model name to the nearest-q0.5 quantile key.
+
+        Checks matched_models first, then models (for pre-match calls).
+        If name already exists exactly in either pool, returns it unchanged.
+        Otherwise finds all keys of the form '{name}_q{val}' and returns
+        the one with val closest to 0.5.
+        """
+        if not name:
+            return name
+        for pool in (self.matched_models, self.models):
+            if name in pool:
+                return name
+            candidates = []
+            for key in pool:
+                m = _re.match(rf'^{_re.escape(name)}_q([\d.]+)$', key)
+                if m:
+                    candidates.append((abs(float(m.group(1)) - 0.5), key))
+            if candidates:
+                return min(candidates)[1]
+        return name
 
     # ------------------------------------------------------------------
     # Compatibility properties
@@ -222,6 +249,8 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
         max_list : int
             Max elements to preview for list/tuple.
         """
+        if model_name is not None:
+            model_name = self._resolve_model_name(model_name)
         target = self.matched_models
         if model_name is not None:
             target = target.get(model_name, {})

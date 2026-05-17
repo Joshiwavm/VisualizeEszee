@@ -101,6 +101,8 @@ class PlotMaps:
         if use_style:
             setup_plot_style()
 
+        model_name = self._resolve_model_name(model_name)
+
         map_types = types if isinstance(types, (list, tuple)) else [types]
         allowed_types = {'input', 'filtered', 'residual', 'data', 'deconvolved', 'joint_residual'}
         invalid = [t for t in map_types if t not in allowed_types]
@@ -111,8 +113,10 @@ class PlotMaps:
         if isinstance(data_name, (list, tuple)):
             concat_dn = "+".join(data_name)
             mm_entry = self.matched_models[model_name].get(concat_dn, {})
-            first_dn = data_name[0] if data_name else None
-            ds_entry = self.model_maps.get(model_name, {}).get(first_dn)
+            # Use the dataset whose pixel grid the JvM-clean output lives on.
+            # JvM_clean stores 'best_dn' = smallest-beam dataset; fall back to first.
+            ref_dn = mm_entry.get('best_dn', data_name[0])
+            ds_entry = self.model_maps.get(model_name, {}).get(ref_dn)
         else:
             mm_entry = self.matched_models[model_name].get(data_name, {})
             ds_entry = self.model_maps.get(model_name, {}).get(data_name)
@@ -241,11 +245,12 @@ class PlotMaps:
                             _model_jybeam = (_model_jypix / _pb_safe) / _factor
                             _smoothed_beam = smooth(_model_jybeam, _jvm_sigma)
                             _dn_list = list(data_name) if isinstance(data_name, (list, tuple)) else [data_name]
-                            _pb_combined = self._get_field_averaged_pb(model_name, _dn_list, _dn_list[0], fkey, skey)
+                            _best_dn = ref_dn if isinstance(data_name, (list, tuple)) else data_name
+                            _pb_combined = self._get_field_averaged_pb(model_name, _dn_list, _best_dn, fkey, skey)
                             _smoothed = _smoothed_beam * _pb_combined
                             ax.contour(extract_plane(_smoothed), levels=_levels_asc,
                                        colors='black', linestyles='-',
-                                       linewidths=0.5, alpha=0.7)
+                                       linewidths=0.5, alpha=0.35)
 
             ax.set_title(name)
             try:

@@ -271,6 +271,8 @@ class PlotPointSourceSpectra:
         if use_style:
             setup_plot_style()
 
+        model_name = self._resolve_model_name(model_name)
+
         if isinstance(data_names, str):
             data_names = [data_names]
 

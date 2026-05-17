@@ -17,17 +17,22 @@ class TransformInput:
         self.p = model_params
         self.model_type = model_type
 
+    _MODEL_TYPE_ALIASES = {
+        'gnfwEmulator': 'gnfwPressure',
+    }
+
     def run(self) -> Dict[str, Any]:  # backward compatibility
         base = {
-            'offset': float(self.p.get('offset', 0.0)),  # offset may default to 0
-            'e': float(self.p.get('e', self.p.get('eccentricity', 0.0))),  # ellipticity may default to 0
+            'offset': float(self.p.get('offset', 0.0)),
+            'e': float(self.p.get('e', self.p.get('eccentricity', 0.0))),
             'limdist': np.inf,
             'epsrel': 1.0e-6,
             'freeLS': self.p.get('depth', None),
         }
-        if self.model_type == 'A10Pressure':
+        model_type = self._MODEL_TYPE_ALIASES.get(self.model_type, self.model_type)
+        if model_type == 'A10Pressure':
             return self._a10_pressure(base)
-        if self.model_type == 'gnfwPressure':
+        if model_type == 'gnfwPressure':
             return self._gnfw_pressure(base)
         return base
 
