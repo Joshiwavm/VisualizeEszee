@@ -224,6 +224,22 @@ class LoadPickles:
         return param_dicts
 
     
+    def read_map_sample(self) -> np.ndarray:
+        """Return the MAP (highest log-likelihood) sample as shape (n_params, 1)."""
+        results = self.results['samples']
+        samples = np.copy(results['samples'])
+        idx_map = int(np.argmax(results['logl']))
+        return samples[idx_map:idx_map + 1, :].T  # (n_params, 1)
+
+    def get_parameters_from_map(self, filename: str):
+        """Extract parameter dicts at the MAP (peak log-likelihood) sample."""
+        self.results = np.load(filename, allow_pickle=True)
+        map_array  = self.read_map_sample()
+        param_list = self._read_fixedvalues()
+        params     = self._build_param_dicts(map_array, param_list)
+        calibs     = self._read_calibrations(map_array)
+        return params, calibs
+
     def get_point_sources_from_pickle(self, filename: Optional[str] = None) -> list:
         """Extract frozen point-source component parameters from the pickle.
 

@@ -89,12 +89,8 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
     # ------------------------------------------------------------------
     # Parameter summary
     # ------------------------------------------------------------------
-    def summary(self, model_name: str | None = None):
+    def summary(self, model_name: str | None = None, max_logL: bool = False):
         """Print a human-readable overview of loaded data and model parameters.
-
-        Unlike ``dump_structure`` (which exposes the raw matched_models dict),
-        this shows the *physical parameter values* stored in ``self.models`` —
-        useful immediately after ``add_model`` to verify what was loaded.
 
         Parameters
         ----------
@@ -102,6 +98,9 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
             If given, show detailed parameters only for models whose name
             starts with ``model_name``.  If None, show all models with their
             parameters.
+        max_logL : bool
+            If True, display MAP (peak log-likelihood) parameters for
+            pickle-sourced models instead of the stored quantile values.
         """
         T, L = '├── ', '└── '
 
@@ -186,7 +185,9 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
             src    = info.get('source', '?')
             q      = info.get('quantile')
             tags   = []
-            if q is not None:
+            if max_logL and info.get('source') == 'pickle':
+                tags.append('MAP')
+            elif q is not None:
                 tags.append(f"q={q}")
             if mn in self.matched_models:
                 tags.append('matched')
@@ -196,6 +197,15 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
             show = (model_name is None or mn == model_name or mn.startswith(model_name))
             if show:
                 params = info.get('parameters')
+                # Override with MAP params if requested and model came from a pickle
+                if max_logL and info.get('source') == 'pickle' and info.get('filename'):
+                    try:
+                        map_params, _ = self.get_parameters_from_map(info['filename'])
+                        # map_params is list-of-lists (n_quants=1, n_compts)
+                        compts = map_params[0]
+                        params = compts[0] if len(compts) == 1 else compts
+                    except Exception as e:
+                        print(f"  [MAP load failed for {mn}: {e}]")
                 cont = '    ' if is_last else '│   '
                 if isinstance(params, list):
                     for ci, cp in enumerate(params):
