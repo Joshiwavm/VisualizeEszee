@@ -379,6 +379,8 @@ class PlotRadialDistributions:
                                 residual_model: str | None = None,
                                 show_bands: bool = True,
                                 data_zorder: dict | None = None,
+                                ylim_real: tuple | None = None,
+                                ylim_imag: tuple | None = None,
                                 **kwargs):
         """
         Plot radial UV distributions.
@@ -438,8 +440,8 @@ class PlotRadialDistributions:
         fig, axes = plt.subplots(2, 1, sharex=True, figsize=(4, 5),
                                  gridspec_kw={'height_ratios': [4, 1], 'hspace': 0.0})
 
-        ylim_real_arg = (-4, 0.6) if residual_model is None else (-1.3, 1)
-        ylim_imag_arg = (-0.4, 0.4) if residual_model is None else None
+        ylim_real_arg = ylim_real if ylim_real is not None else ((-4, 0.6) if residual_model is None else (-1.3, 1))
+        ylim_imag_arg = ylim_imag if ylim_imag is not None else ((-0.4, 0.4) if residual_model is None else None)
 
         # Data plotting -------------------------------------------------
         color_idx = 0

@@ -498,34 +498,53 @@ class FourierManager:
                                  amp1: Optional[float] = None,
                                  amp2: Optional[float] = None,
                                  ref_freq2: float = 4e10,
-                                 pb_factor: float = 1.0) -> np.ndarray:
-        """Compute analytical visibility contribution of a point source.
+                                 pb_factor: float = 1.0,
+                                 ps_type: str = 'pointSource',
+                                 major_deg: float = 0.0,
+                                 ellipticity: float = 0.0,
+                                 angle_deg: float = 0.0) -> np.ndarray:
+        """Compute analytical visibility contribution of a point or Gaussian source.
 
-        Mirrors the eszee FT._uvpoint convention.  Fitted amplitudes are
-        intrinsic fluxes (eszee applies the primary beam in its forward model);
-        pb_factor re-applies it so that the subtraction is consistent.
+        Mirrors the eszee FT._uvpoint / _uvgauss convention.  Fitted amplitudes
+        are intrinsic fluxes (eszee applies the primary beam in its forward
+        model); pb_factor re-applies it so that the subtraction is consistent.
 
-        For powerLaw::
-            vis = offset + pb_factor * amplitude * (freq/ref_freq)^spec_index
-                  * exp(2πi (u·dRA + v·dDec))
+        ps_type controls the spatial profile:
+          'pointSource'  – delta function (default)
+          'gaussSource'  – elliptical Gaussian in the UV plane;
+                           requires major_deg, ellipticity, angle_deg
 
-        For doublePowerLaw::
-            vis = offset + pb_factor * [amp1*(freq/ref_freq)^alpha1
-                                      + amp2*(freq/ref_freq2)^alpha2]
-                  * exp(2πi (u·dRA + v·dDec))
+        spec_type controls the spectral shape (applied to all ps_types):
+          'powerLaw'       – amplitude * (freq/ref_freq)^spec_index
+          'doublePowerLaw' – amp1*(freq/ref_freq)^spec_index
+                             + amp2*(freq/ref_freq2)^spec_index2
         """
-        dRA  = np.deg2rad(ra_ps  - crval1) * np.cos(np.deg2rad(crval2))
-        dDec = np.deg2rad(dec_ps - crval2)
+        dRA   = np.deg2rad(ra_ps  - crval1) * np.cos(np.deg2rad(crval2))
+        dDec  = np.deg2rad(dec_ps - crval2)
         phase = np.exp(2j * np.pi * (u * dRA + v * dDec))
         freq  = np.asarray(freq)
+
+        # Spectral amplitude (same for both spatial types)
         if spec_type == 'doublePowerLaw':
             a1 = float(amp1 if amp1 is not None else amplitude)
             a2 = float(amp2 if amp2 is not None else 0.0)
-            spec_scale = (a1 * (freq / ref_freq)  ** spec_index
-                        + a2 * (freq / ref_freq2) ** spec_index2)
-            return offset + pb_factor * spec_scale * phase
-        spec_scale = (freq / ref_freq) ** spec_index
-        return offset + pb_factor * amplitude * spec_scale * phase
+            spec_amp = pb_factor * (a1 * (freq / ref_freq)  ** spec_index
+                                  + a2 * (freq / ref_freq2) ** spec_index2)
+        else:
+            spec_amp = pb_factor * amplitude * (freq / ref_freq) ** spec_index
+
+        if ps_type == 'gaussSource':
+            # Port of eszee uvgauss: Gaussian envelope in the UV plane.
+            # scale is the major axis FWHM in degrees; e is ellipticity (0=circular).
+            sint = np.sin(np.deg2rad(angle_deg))
+            cost = np.cos(np.deg2rad(angle_deg))
+            scale_rad = np.deg2rad(major_deg)
+            ur = np.pi * (-u * sint - v * cost) * scale_rad
+            vr = np.pi * ( u * cost - v * sint) * scale_rad * (1.0 - ellipticity)
+            gauss_env = np.exp(-2.0 * (ur ** 2 + vr ** 2))
+            return offset + spec_amp * gauss_env * phase
+
+        return offset + spec_amp * phase
 
     def apply_point_source_correction(self, data_name: str, ps_list) -> None:
         """Subtract point-source contributions from residual visibilities.
@@ -612,6 +631,10 @@ class FourierManager:
                         amp2=ps.get('amp2'),
                         ref_freq2=ps.get('ref_freq2', 4e10),
                         pb_factor=pb_factor,
+                        ps_type=ps.get('ps_type', 'pointSource'),
+                        major_deg=ps.get('major_deg', 0.0),
+                        ellipticity=ps.get('ellipticity', 0.0),
+                        angle_deg=ps.get('angle_deg', 0.0),
                     )
 
                 ps_vis_scaled = ps_vis_total * calib_factor
