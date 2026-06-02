@@ -178,6 +178,7 @@ class PlotParameterTable:
     def make_parameter_table(
         self,
         fnames: Dict[str, str],
+        name_map: Dict[str, str] | None = None,
         unit_scale: Dict[str, float] | None = None,
         center: tuple[float, float] | None = None,
         save: bool = True,
@@ -200,6 +201,14 @@ class PlotParameterTable:
         ----------
         fnames : dict {label: fname}
             Row label → pickle path.
+        name_map : dict {label: display_name}, optional
+            Rename row labels before building the table.  Keys not present in
+            fnames are silently ignored.  Example::
+
+                name_map={
+                    'a10_sph':    'A10 (sph)',
+                    'gnfw_abg_ell': r'gNFW $\alpha\beta\gamma$ free (ell)',
+                }
         unit_scale : dict {param_name: factor}, optional
             Scaling applied before formatting (merged with defaults).
         save : bool
@@ -215,6 +224,9 @@ class PlotParameterTable:
             ``.display``: human-readable DataFrame (renders nicely in notebooks).
             ``.latex``:   LaTeX-formatted DataFrame.
         """
+        if name_map:
+            fnames = {name_map.get(k, k): v for k, v in fnames.items()}
+
         # Default unit scaling (user unit_scale takes precedence)
         _DEFAULT_SCALE = {'mass': 1e-14, 'r_s': 3600}
         effective_scale = {**_DEFAULT_SCALE, **(unit_scale or {})}
@@ -374,18 +386,23 @@ class PlotParameterTable:
                     nice_rows[lbl].append('—')
 
         # Add evidence column
+        # Row 1: raw Δln Z vs null model.  Rows 2+: difference relative to row 1.
         ev_latex_col_hdr = r'$\Delta\ln\mathcal{Z}\ (\sigma)$'
         ev_nice_col_hdr  = 'ΔlnZ (σ)'
-        for lbl in fnames:
+        _first_delta = evidence[next(iter(fnames))][0]
+        for i, lbl in enumerate(fnames):
             delta, sigma = evidence[lbl]
             if np.isnan(delta):
                 latex_rows[lbl].append('—')
                 nice_rows[lbl].append('—')
-            else:
-                latex_rows[lbl].append(
-                    f'${delta:.1f}\\ ({sigma:.1f}\\sigma)$'
-                )
+            elif i == 0:
+                latex_rows[lbl].append(f'${delta:.1f}\\ ({sigma:.1f}\\sigma)$')
                 nice_rows[lbl].append(f'{delta:.1f} ({sigma:.1f}σ)')
+            else:
+                rel = delta - _first_delta
+                rel_sigma = float(np.sign(rel) * np.sqrt(2.0 * abs(rel)))
+                latex_rows[lbl].append(f'${rel:+.1f}\\ ({rel_sigma:+.1f}\\sigma)$')
+                nice_rows[lbl].append(f'{rel:+.1f} ({rel_sigma:+.1f}σ)')
 
         latex_cols = [_LATEX_NAMES.get(p, p) for p in final_params] + [ev_latex_col_hdr]
         nice_cols  = [_NICE_NAMES.get(p, p)  for p in final_params] + [ev_nice_col_hdr]

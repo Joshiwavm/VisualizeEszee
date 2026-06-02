@@ -630,9 +630,12 @@ class PlotRadialDistributions:
         if save_plots:
             _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
             _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
-            filename = _prefix + ('UVradial_data_combined.png' if data_name is None else f'UVradial_{data_name}.png')
-            plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
-            print(f"Saved plot: {output_dir}/{filename}")
+            _resid_suffix = '_residual' if residual_model is not None else ''
+            _base = 'UVradial_data_combined' if data_name is None else f'UVradial_{data_name}'
+            filename = _prefix + _base + _resid_suffix + '.png'
+            out_path = os.path.join(output_dir, filename)
+            plt.savefig(out_path, dpi=300, bbox_inches='tight')
+            print(f"Saved plot: {out_path}")
         
         if return_fig:
             return fig, axes
