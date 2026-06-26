@@ -42,6 +42,7 @@ class PlotMaps:
                  fov: float | None = None,
                  center: Tuple[float, float] | None = None,
                  show_neg_contours: bool = True,
+                 show_model_contours: bool = True,
                  **imshow_kwargs):
         """Plot one or multiple map types in a single row.
 
@@ -60,9 +61,12 @@ class PlotMaps:
             Sky coordinate at the centre of the cropped view.
             Defaults to the image centre (CRVAL1/2) when fov is set.
         show_neg_contours : bool
-            Overlay negative sigma contours on the ``deconvolved`` panel when
+            Overlay negative sigma contours (white) on the ``deconvolved`` panel when
             an RMS estimate is available (stored by ``JvM_clean``).
             Levels are -1σ, -3σ, -5σ, … down to vmin (step of 2σ).
+        show_model_contours : bool
+            Overlay smoothed model contours (black) on the ``deconvolved`` panel.
+            Requires ``show_neg_contours=True`` to also be set.
         """
 
         def _add_beam(ax, header):
@@ -234,7 +238,7 @@ class PlotMaps:
                                    colors='white', linestyles='-',
                                    linewidths=0.5, alpha=0.8)
                         _jvm_sigma = mm_entry.get('jvm_sigma')
-                        if _jvm_sigma is not None and ds_entry is not None:
+                        if show_model_contours and _jvm_sigma is not None and ds_entry is not None:
                             _entry = ds_entry[fkey][skey]
                             _model_jypix, _ = self._convert_model_map_to_jypix(model_name, _entry)
                             _, _, _ipix, _jpix = get_map_beam_and_pix(_entry.get('header', {}))

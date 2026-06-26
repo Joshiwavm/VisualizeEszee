@@ -291,13 +291,14 @@ class LoadPickles:
             vary_model = list(vary['values']['model'].get('vary', []))
             vary_spec  = list(vary['values']['spectrum'].get('vary', []))
 
-            if model_type != 'pointSource':
+            if model_type not in ('pointSource', 'gaussSource'):
                 idx_quant += sum(bool(v) for v in vary_model) + sum(bool(v) for v in vary_spec)
                 continue
 
             try:
                 guess_m = list(self.results['pars'][j_compt]['model']['guess'])
                 guess_s = list(self.results['pars'][j_compt]['spectrum']['guess'])
+                islog_m = list(self.results['pars'][j_compt]['model'].get('islog', []))
             except (IndexError, KeyError):
                 idx_quant += sum(bool(v) for v in vary_model) + sum(bool(v) for v in vary_spec)
                 continue
@@ -313,6 +314,9 @@ class LoadPickles:
 
             n_model = max(len(vary_model), len(guess_m))
             m_vals  = [_read(guess_m, vary_model, i) for i in range(n_model)]
+            # gaussSource stores amplitude in log10 space; convert back to linear.
+            m_vals  = [10.0 ** v if i < len(islog_m) and islog_m[i] else v
+                       for i, v in enumerate(m_vals)]
 
             n_spec  = max(len(vary_spec), len(guess_s))
             s_vals  = [_read(guess_s,  vary_spec,  i) for i in range(n_spec)]
@@ -333,6 +337,14 @@ class LoadPickles:
                 entry['amp1']        = s_vals[3] if len(s_vals) > 3 else 0.0  # A_dust @100GHz
                 entry['amp2']        = s_vals[2] if len(s_vals) > 2 else 0.0  # A_sync @40GHz
                 entry['ref_freq2']   = ESZEE_REF_FREQ2
+            if model_type == 'gaussSource':
+                # eszee gaussSource layout: [RA, Dec, Amp, Major, e, Angle, Offset]
+                # The generic entry above set 'offset' = m_vals[3] (= Major) — fix it.
+                entry['offset']      = m_vals[6] if len(m_vals) > 6 else 0.0
+                entry['ps_type']     = 'gaussSource'
+                entry['major_deg']   = m_vals[3] if len(m_vals) > 3 else 0.0
+                entry['ellipticity'] = m_vals[4] if len(m_vals) > 4 else 0.0
+                entry['angle_deg']   = m_vals[5] if len(m_vals) > 5 else 0.0
             ps_list.append(entry)
 
         # Extract median calib scalars (one per dataset, in eszee/add_data order)
