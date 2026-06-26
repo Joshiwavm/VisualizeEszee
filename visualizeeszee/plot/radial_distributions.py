@@ -470,7 +470,7 @@ class PlotRadialDistributions:
 
         # Update y-labels to show residual context
         if residual_model is not None:
-            _ref_short = residual_model.split('_q')[0] if '_q' in residual_model else residual_model
+            _ref_short = (residual_model.split('_q')[0] if '_q' in residual_model else residual_model).replace('_', ' ')
             axes[0].set_ylabel(fr'Re(V $-$ V$_{{\rm {_ref_short}}}$) [mJy]', fontsize=9)
             axes[1].set_ylabel(fr'Im(V $-$ V$_{{\rm {_ref_short}}}$) [mJy]', fontsize=9)
 
@@ -619,27 +619,30 @@ class PlotRadialDistributions:
         if legend_layout == 'none':
             pass
         elif legend_layout in ('split', 'stacked_right'):
-            data_labels = [f"{dn}" for dn in dataset_names]
+            data_labels = [dn.replace('_', ' ') for dn in dataset_names]
             # Build proxy handles for real-part markers (match colors)
             proxy_handles = []
             for i, dn in enumerate(dataset_names):
                 color = f"C{i % 10}"
                 proxy_handles.append(Line2D([0], [0], ls='', marker='D', markerfacecolor='white',
-                                            markeredgecolor=color, color=color, label=dn))
-            model_legend_handles = [Line2D([0], [0], color='black', lw=1.5, linestyle=ls, label=mn)
+                                            markeredgecolor=color, color=color, label=dn.replace('_', ' ')))
+            model_legend_handles = [Line2D([0], [0], color='black', lw=1.5, linestyle=ls, label=mn.replace('_', ' '))
                                     for mn, ls in model_linestyles_map.items()] if model_linestyles_map else []
             if legend_layout == 'stacked_right' and model_legend_handles:
                 # Models at lower-right; Data stacked above it.
+                # Right-align entries + titles (markers after labels, flush right).
                 leg_models = axes[0].legend(model_legend_handles,
                                             [h.get_label() for h in model_legend_handles],
                                             frameon=False, loc='lower right',
-                                            fontsize=7, title='Models', title_fontsize=9)
+                                            fontsize=7, title='Models', title_fontsize=9,
+                                            alignment='right', markerfirst=False)
                 fig.canvas.draw()
                 inv = axes[0].transAxes.inverted()
                 y_top = leg_models.get_window_extent().transformed(inv).y1
                 leg_data = axes[0].legend(proxy_handles, data_labels, frameon=False,
                                           loc='lower right', bbox_to_anchor=(1.0, y_top),
-                                          fontsize=7, title='Data', title_fontsize=9)
+                                          fontsize=7, title='Data', title_fontsize=9,
+                                          alignment='right', markerfirst=False)
                 axes[0].add_artist(leg_models)
             else:
                 leg_data = axes[0].legend(proxy_handles, data_labels, frameon=False, loc='lower right', fontsize=7, title='Data', title_fontsize=9)
