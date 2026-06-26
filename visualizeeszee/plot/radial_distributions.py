@@ -373,6 +373,8 @@ class PlotRadialDistributions:
                                 n_model_pts: int = 1500, r_min_k: float = 0.1, r_max_k: float = 30.0,
                                 axis: str = 'v',
                                 separate_legends: bool = True,
+                                show_legends: bool = True,
+                                legend_layout: str | None = None,
                                 return_fig: bool = False,
                                 show_label: bool = True,
                                 log_bins: bool = False,
@@ -605,7 +607,18 @@ class PlotRadialDistributions:
                 print("Model plotting requested but required attributes (matched_models, fft_map, sample_uv) missing.")
 
         # Legends ------------------------------------------------------
-        if separate_legends:
+        # legend_layout overrides separate_legends when provided:
+        #   'split'         -> data lower-right, models lower-left (default behaviour)
+        #   'stacked_right' -> both lower-right, models stacked above data
+        #   'none'          -> no legends
+        if legend_layout is None:
+            legend_layout = 'split' if separate_legends else 'single'
+        if not show_legends:
+            legend_layout = 'none'
+
+        if legend_layout == 'none':
+            pass
+        elif legend_layout in ('split', 'stacked_right'):
             data_labels = [f"{dn}" for dn in dataset_names]
             # Build proxy handles for real-part markers (match colors)
             proxy_handles = []
@@ -613,15 +626,29 @@ class PlotRadialDistributions:
                 color = f"C{i % 10}"
                 proxy_handles.append(Line2D([0], [0], ls='', marker='D', markerfacecolor='white',
                                             markeredgecolor=color, color=color, label=dn))
-            leg_data = axes[0].legend(proxy_handles, data_labels, frameon=False, loc='lower right', fontsize=7, title='Data', title_fontsize=9)
-            if model_linestyles_map:
-                model_legend_handles = [Line2D([0], [0], color='black', lw=1.5, linestyle=ls, label=mn)
-                                        for mn, ls in model_linestyles_map.items()]
+            model_legend_handles = [Line2D([0], [0], color='black', lw=1.5, linestyle=ls, label=mn)
+                                    for mn, ls in model_linestyles_map.items()] if model_linestyles_map else []
+            if legend_layout == 'stacked_right' and model_legend_handles:
+                # Models at lower-right; Data stacked above it.
                 leg_models = axes[0].legend(model_legend_handles,
                                             [h.get_label() for h in model_legend_handles],
-                                            frameon=False, loc='lower left', fontsize=7, title='Models', title_fontsize=9)
-                # Preserve both legends on same axes
-                axes[0].add_artist(leg_data)
+                                            frameon=False, loc='lower right',
+                                            fontsize=7, title='Models', title_fontsize=9)
+                fig.canvas.draw()
+                inv = axes[0].transAxes.inverted()
+                y_top = leg_models.get_window_extent().transformed(inv).y1
+                leg_data = axes[0].legend(proxy_handles, data_labels, frameon=False,
+                                          loc='lower right', bbox_to_anchor=(1.0, y_top),
+                                          fontsize=7, title='Data', title_fontsize=9)
+                axes[0].add_artist(leg_models)
+            else:
+                leg_data = axes[0].legend(proxy_handles, data_labels, frameon=False, loc='lower right', fontsize=7, title='Data', title_fontsize=9)
+                if model_legend_handles:
+                    leg_models = axes[0].legend(model_legend_handles,
+                                                [h.get_label() for h in model_legend_handles],
+                                                frameon=False, loc='lower left', fontsize=7, title='Models', title_fontsize=9)
+                    # Preserve both legends on same axes
+                    axes[0].add_artist(leg_data)
         else:
             axes[0].legend(frameon=False, loc='lower right', fontsize=7)
 
