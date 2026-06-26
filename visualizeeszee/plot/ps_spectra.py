@@ -55,25 +55,26 @@ class PlotPointSourceSpectra:
         dirty_map = self._multivis_fields_to_image(field_dicts, npix=npix, pixel_scale_deg=pixel_scale_deg)
         return dirty_map, center_ra, center_dec, pixel_scale_deg, field_weights
 
-    def _make_joint_dirty_map(self, model_name, data_name):
-        """Build a single dirty map from residual visibilities of all SPWs combined."""
+    def _make_joint_dirty_map(self, model_name, data_name, vis_key='resid_vis',
+                              npix=None, pixel_scale_deg=None):
+        """Build a single dirty map from visibilities of all SPWs combined."""
         sampled = self.matched_models.get(model_name, {}).get(data_name, {}).get('sampled_model', {})
-        maps_mm = self.matched_models.get(model_name, {}).get(data_name, {}).get('maps', {})
 
-        pixel_scale_deg = npix = None
-        for fk in sampled:
-            for spw_key in sampled[fk]:
-                pb_entry = maps_mm.get(fk, {}).get(spw_key, {})
-                hdr = pb_entry.get('header', {})
-                if hdr:
-                    _, _, pix_i, _ = get_map_beam_and_pix(hdr)
-                    pixel_scale_deg = abs(float(pix_i))
-                    md = pb_entry.get('model_data')
-                    if md is not None:
-                        npix = extract_plane(md).shape[0]
+        if npix is None or pixel_scale_deg is None:
+            maps_mm = self.matched_models.get(model_name, {}).get(data_name, {}).get('maps', {})
+            for fk in sampled:
+                for spw_key in sampled[fk]:
+                    pb_entry = maps_mm.get(fk, {}).get(spw_key, {})
+                    hdr = pb_entry.get('header', {})
+                    if hdr:
+                        _, _, pix_i, _ = get_map_beam_and_pix(hdr)
+                        pixel_scale_deg = abs(float(pix_i))
+                        md = pb_entry.get('model_data')
+                        if md is not None:
+                            npix = extract_plane(md).shape[0]
+                        break
+                if pixel_scale_deg is not None:
                     break
-            if pixel_scale_deg is not None:
-                break
 
         if pixel_scale_deg is None or npix is None:
             return None, None, None, None
@@ -92,7 +93,7 @@ class PlotPointSourceSpectra:
         for fk, pc in field_phases.items():
             u_all   = np.concatenate([sampled[fk][s]['u']         for s in sampled[fk]])
             v_all   = np.concatenate([sampled[fk][s]['v']         for s in sampled[fk]])
-            vis_all = np.concatenate([sampled[fk][s]['resid_vis'] for s in sampled[fk]])
+            vis_all = np.concatenate([sampled[fk][s][vis_key]     for s in sampled[fk]])
             wt_all  = np.concatenate([sampled[fk][s]['weights']   for s in sampled[fk]])
             field_dicts.append({
                 'u': u_all, 'v': v_all, 'vis': vis_all, 'weights': wt_all,
@@ -184,11 +185,134 @@ class PlotPointSourceSpectra:
                   + ps.get('amp2', 0.0) * (freq_hz / ps.get('ref_freq2', 4e10)) ** ps.get('spec_index2', 0.0))
         return ps.get('amplitude', 0.0) * (freq_hz / ps.get('ref_freq', 1e11)) ** ps.get('spec_index', 0.0)
 
-    def _plot_extraction_maps(self, ps_list, data_names, model_name, aperture_arcsec):
-        """Joint dirty map per dataset with all PS aperture circles overlaid.
+    def _make_ps_filtered_map(self, ps_list, data_name, model_name):
+        """Dirty image of PS model visibilities (filtered PS map).
 
-        Layout: 1 row × len(data_names) columns. All SPWs are combined into a single
-        multi-frequency synthesis map per dataset to maximise continuum sensitivity.
+        Returns
+        -------
+        ps_map : np.ndarray or None
+        center_ra, center_dec : float
+        pixel_scale_deg : float
+        hdr_ref : dict  — FITS header for the pixel grid
+        """
+        ref_model = model_name
+        if (ref_model not in self.matched_models
+                or data_name not in self.matched_models.get(ref_model, {})):
+            ref_model = next(
+                (mn for mn in self.matched_models
+                 if data_name in self.matched_models[mn]
+                 and 'sampled_model' in self.matched_models[mn][data_name]),
+                None,
+            )
+        if ref_model is None:
+            return None, None, None, None, None
+
+        ref_sm   = self.matched_models[ref_model][data_name]['sampled_model']
+        ref_maps = self.matched_models[ref_model][data_name].get('maps', {})
+
+        pixel_scale_deg = npix = hdr_ref = None
+        for fk in ref_sm:
+            for sk in ref_sm[fk]:
+                pb_entry = ref_maps.get(fk, {}).get(sk, {})
+                hdr = pb_entry.get('header', {})
+                if hdr:
+                    _, _, pix_i, _ = get_map_beam_and_pix(hdr)
+                    pixel_scale_deg = abs(float(pix_i))
+                    md = pb_entry.get('model_data')
+                    if md is not None:
+                        npix = extract_plane(md).shape[0]
+                    hdr_ref = hdr
+                    break
+            if pixel_scale_deg is not None:
+                break
+
+        if pixel_scale_deg is None or npix is None:
+            return None, None, None, None, None
+
+        field_phases = {
+            fk: self.uvdata[data_name].get(fk, {}).get('phase_center', (0.0, 0.0))
+            for fk in ref_sm
+        }
+        center_ra  = float(np.mean([pc[0] for pc in field_phases.values()]))
+        center_dec = float(np.mean([pc[1] for pc in field_phases.values()]))
+
+        field_dicts = []
+        for fk, pc in field_phases.items():
+            u_parts, v_parts, vis_parts, w_parts = [], [], [], []
+            crval1, crval2 = float(pc[0]), float(pc[1])
+
+            for sk, entry in ref_sm[fk].items():
+                u    = entry['u']
+                v    = entry['v']
+                freq = entry['uvfreq']
+                wgt  = entry['weights']
+
+                pb_entry      = ref_maps.get(fk, {}).get(sk, {})
+                pbeam_spline  = None
+                if 'pbeam_data' in pb_entry and 'header' in pb_entry:
+                    pb2d = np.nan_to_num(np.squeeze(pb_entry['pbeam_data']), nan=0.0)
+                    ny, nx = pb2d.shape
+                    pbeam_spline = RectBivariateSpline(
+                        np.linspace(0, ny, ny), np.linspace(0, nx, nx),
+                        pb2d, kx=1, ky=1, s=0,
+                    )
+
+                ps_vis_total = np.zeros(len(u), dtype=np.complex128)
+                for ps in ps_list:
+                    pb_factor = 1.0
+                    if pbeam_spline is not None:
+                        hdr = pb_entry['header']
+                        ps_xpix = (hdr['CRPIX1']
+                                   + (ps['ra']  - hdr['CRVAL1'])
+                                   * np.cos(np.deg2rad(hdr['CRVAL2'])) / hdr['CDELT1'])
+                        ps_ypix = (hdr['CRPIX2']
+                                   + (ps['dec'] - hdr['CRVAL2']) / hdr['CDELT2'])
+                        pb_factor = float(pbeam_spline.ev(ps_ypix, ps_xpix))
+
+                    ps_vis_total += self.compute_point_source_vis(
+                        u, v, freq,
+                        ra_ps=ps['ra'],        dec_ps=ps['dec'],
+                        amplitude=ps['amplitude'], offset=ps['offset'],
+                        spec_index=ps['spec_index'],
+                        crval1=crval1,         crval2=crval2,
+                        ref_freq=ps.get('ref_freq', 1e11),
+                        spec_type=ps.get('spec_type', 'powerLaw'),
+                        spec_index2=ps.get('spec_index2', 0.0),
+                        amp1=ps.get('amp1'),   amp2=ps.get('amp2'),
+                        ref_freq2=ps.get('ref_freq2', 4e10),
+                        pb_factor=pb_factor,
+                        ps_type=ps.get('ps_type', 'pointSource'),
+                        major_deg=ps.get('major_deg', 0.0),
+                        ellipticity=ps.get('ellipticity', 0.0),
+                        angle_deg=ps.get('angle_deg', 0.0),
+                    )
+
+                u_parts.append(u); v_parts.append(v)
+                vis_parts.append(ps_vis_total); w_parts.append(wgt)
+
+            field_dicts.append({
+                'u':       np.concatenate(u_parts),
+                'v':       np.concatenate(v_parts),
+                'vis':     np.concatenate(vis_parts),
+                'weights': np.concatenate(w_parts),
+                'dRA':  np.deg2rad(center_ra - pc[0])
+                        * np.cos(np.deg2rad(0.5 * (center_ra + pc[0]))),
+                'dDec': np.deg2rad(center_dec - pc[1]),
+            })
+
+        ps_map = self._multivis_fields_to_image(
+            field_dicts, npix=npix, pixel_scale_deg=pixel_scale_deg)
+        return ps_map, center_ra, center_dec, pixel_scale_deg, hdr_ref
+
+    def _plot_extraction_maps(self, ps_list, data_names, model_name, aperture_arcsec,
+                              save_fits=False, output_dir=None):
+        """Three-panel PS map per dataset: filtered, dirty, residual.
+
+        Panels
+        ------
+        filtered : dirty image of PS model visibilities
+        dirty    : dirty image of cluster-subtracted residual visibilities (data − cluster)
+        residual : dirty − filtered in image space (approximates PS-subtracted map)
 
         Parameters
         ----------
@@ -196,67 +320,86 @@ class PlotPointSourceSpectra:
         data_names : list of str
         model_name : str
         aperture_arcsec : float
-            Radius of the search aperture drawn around each PS.
+        save_fits : bool
+            Save the PS filtered map as a FITS file.
+        output_dir : str or None
         """
-        n_cols = len(data_names)
-        if n_cols == 0:
+        n_rows = len(data_names)
+        if n_rows == 0:
             return
 
         ps_colors = [f'C{i}' for i in range(len(ps_list))]
 
         fig, axes = plt.subplots(
-            1, n_cols,
-            figsize=(4.5 * n_cols, 4.5),
+            n_rows, 3,
+            figsize=(4.5 * 3, 4.5 * n_rows),
             squeeze=False,
         )
 
-        for ci, dn in enumerate(data_names):
-            ax = axes[0, ci]
-            dirty_map, center_ra, center_dec, pixel_scale_deg = \
-                self._make_joint_dirty_map(model_name, dn)
+        for ri, dn in enumerate(data_names):
+            ps_map, center_ra, center_dec, pixel_scale_deg, hdr_ref = \
+                self._make_ps_filtered_map(ps_list, dn, model_name)
+            dirty_map, _cra, _cdec, _psd = self._make_joint_dirty_map(model_name, dn)
 
-            if dirty_map is None:
-                ax.set_visible(False)
+            if ps_map is None or dirty_map is None:
+                for ci in range(3):
+                    axes[ri, ci].set_visible(False)
                 continue
+
+            residual_map = dirty_map - ps_map
 
             pixel_scale_arcsec = pixel_scale_deg * 3600.0
             npix     = dirty_map.shape[0]
             half_fov = 0.5 * npix * pixel_scale_arcsec
+            extent   = [half_fov, -half_fov, -half_fov, half_fov]
 
-            # Extent: RA increases to the left (east), Dec increases upward (north)
-            extent = [half_fov, -half_fov, -half_fov, half_fov]
-
-            vmax = float(np.nanmax(np.abs(dirty_map))) or 1.0
-            im = ax.imshow(
-                dirty_map, origin='lower', cmap='RdBu_r',
-                vmin=-vmax, vmax=vmax,
-                extent=extent,
-            )
-
-            for pi, ps in enumerate(ps_list):
-                row, col = self._ps_pixel_position(
-                    ps['ra'], ps['dec'], center_ra, center_dec, pixel_scale_deg, npix)
-                x_arcsec = (npix / 2 - col) * pixel_scale_arcsec  # positive = east
-                y_arcsec = (row - npix / 2) * pixel_scale_arcsec  # positive = north
-                ax.add_patch(mpatches.Circle(
-                    (x_arcsec, y_arcsec), radius=aperture_arcsec,
-                    fill=False, edgecolor=ps_colors[pi], linewidth=1.2, zorder=5,
-                ))
-
-            ax.set_title(dn, fontsize=8)
-            ax.set_xlabel('ΔRA ["]', fontsize=6)
-            ax.set_ylabel('ΔDec ["]', fontsize=6)
-            ax.tick_params(labelsize=5)
-            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label('Jy/bm', fontsize=5)
-
-        # PS colour legend in the first subplot
-        if ps_list:
-            legend_handles = [
-                mpatches.Patch(facecolor='none', edgecolor=f'C{i}', label=f'PS {i + 1}')
-                for i in range(len(ps_list))
+            panels = [
+                ('filtered',  ps_map,       'PS filtered [Jy/bm]'),
+                ('dirty',     dirty_map,    'Residual dirty [Jy/bm]'),
+                ('residual',  residual_map, 'PS-subtracted [Jy/bm]'),
             ]
-            axes[0, 0].legend(handles=legend_handles, fontsize=6, frameon=True,
-                              loc='upper right', framealpha=0.7)
+
+            for ci, (label, arr, clabel) in enumerate(panels):
+                ax = axes[ri, ci]
+                vmax = float(np.nanmax(np.abs(arr))) or 1.0
+                im = ax.imshow(arr, origin='lower', cmap='RdBu_r',
+                               vmin=-vmax, vmax=vmax, extent=extent)
+                for pi, ps in enumerate(ps_list):
+                    row, col = self._ps_pixel_position(
+                        ps['ra'], ps['dec'], center_ra, center_dec, pixel_scale_deg, npix)
+                    x_arcsec = (npix / 2 - col) * pixel_scale_arcsec
+                    y_arcsec = (row - npix / 2) * pixel_scale_arcsec
+                    ax.add_patch(mpatches.Circle(
+                        (x_arcsec, y_arcsec), radius=aperture_arcsec,
+                        fill=False, edgecolor=ps_colors[pi], linewidth=1.2, zorder=5,
+                    ))
+                ax.set_title(f'{dn} — {label}', fontsize=8)
+                ax.set_xlabel('ΔRA ["]', fontsize=6)
+                ax.set_ylabel('ΔDec ["]', fontsize=6)
+                ax.tick_params(labelsize=5)
+                plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04).set_label(clabel, fontsize=5)
+
+            if ps_list:
+                legend_handles = [
+                    mpatches.Patch(facecolor='none', edgecolor=f'C{i}', label=f'PS {i + 1}')
+                    for i in range(len(ps_list))
+                ]
+                axes[ri, 0].legend(handles=legend_handles, fontsize=6, frameon=True,
+                                   loc='upper right', framealpha=0.7)
+
+            if save_fits and hdr_ref is not None:
+                from astropy.io import fits as _fits
+                _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+                _prefix = f"{_safe_target}_" if _safe_target else ''
+                _odir = output_dir or f'../plots/VisualizeEszee/{_safe_target}/ps_maps/'
+                os.makedirs(_odir, exist_ok=True)
+                _dn_safe = dn.replace(' ', '_')
+                hdr_out = hdr_ref.copy()
+                hdr_out['BUNIT']   = 'Jy/beam'
+                hdr_out['HISTORY'] = 'PS filtered dirty map'
+                fname = os.path.join(_odir, f'{_prefix}{_dn_safe}_ps_filtered.fits')
+                _fits.writeto(fname, ps_map.astype(np.float32), header=hdr_out, overwrite=True)
+                print(f"Saved PS filtered map: {fname}")
 
         plt.tight_layout()
         plt.show()
@@ -266,7 +409,7 @@ class PlotPointSourceSpectra:
                                   output_dir=None,
                                   use_style=True, return_fig=False,
                                   n_model_pts=300, log_log=True,
-                                  plot_maps=False,
+                                  plot_maps=False, save_ps_fits=False,
                                   **kwargs):
         if use_style:
             setup_plot_style()
@@ -336,7 +479,8 @@ class PlotPointSourceSpectra:
             print(f"Saved: {fname}")
 
         if plot_maps:
-            self._plot_extraction_maps(ps_list, data_names, model_name, aperture_arcsec)
+            self._plot_extraction_maps(ps_list, data_names, model_name, aperture_arcsec,
+                                       save_fits=save_ps_fits, output_dir=output_dir)
 
         if return_fig:
             return fig, axes

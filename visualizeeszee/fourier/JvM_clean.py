@@ -132,6 +132,12 @@ class Deconvolve:
             print(f"Writing JvM-cleaned image to {fname}")
             fits.writeto(fname, jvm_image.astype(np.float32), header=h, overwrite=True)
 
+            # PS-subtracted residual on the JvM grid (deconvolved = residual + model)
+            hr = header.copy(); hr['BUNIT'] = 'Jy/beam'; hr['HISTORY'] = 'JvM residual image (data - model)'; hr['rms'] = (std, 'Jy/beam')
+            fname_res = os.path.join(jvm_dir, f"{_prefix}{model_name}_{concat_dn}_{best_field}_{best_spw}_JvM_residual.fits")
+            print(f"Writing JvM residual image to {fname_res}")
+            fits.writeto(fname_res, resid.astype(np.float32), header=hr, overwrite=True)
+
         return jvm_image
 
     def _likelihood_call(self):

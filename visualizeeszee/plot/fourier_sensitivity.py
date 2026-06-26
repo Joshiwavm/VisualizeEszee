@@ -74,7 +74,8 @@ class PlotFourierSensitivity:
 
     def plot_weight_distributions(self, save_plots=False, output_dir=None,
                                   use_style=True, return_fig: bool = False,
-                                  show_label: bool = True, **plot_kwargs):
+                                  show_label: bool = True, ax=None,
+                                  label_override=None, color_offset=0, **plot_kwargs):
         """
         Plots binned and point source sensitivity for all loaded uvdata sets.
         
@@ -105,58 +106,66 @@ class PlotFourierSensitivity:
         if 'ls' not in axhline_kwargs:
             axhline_kwargs['ls'] = ':'
         
-        fig, ax = plt.subplots(figsize=(4, 4), constrained_layout=True)
-        
+        standalone = ax is None
+        if standalone:
+            fig, ax = plt.subplots(figsize=(4, 4), constrained_layout=True)
+        else:
+            fig = ax.figure
+
         for i, name in enumerate(self.uvdata):
             bin_centers, std_binned = self._getWeightDistribution(name)
-            ax.plot(bin_centers, std_binned * 1e6, c=f'C{i}', label=name, **plot_kwargs)
+            label = label_override if label_override is not None else name
+            color = f'C{i + color_offset}'
+            ax.plot(bin_centers, std_binned * 1e6, c=color, label=label, **plot_kwargs)
             ps_sens = (1/np.nansum(1/std_binned**2))**0.5*1e6
-            ax.axhline(ps_sens, c=f'C{i}', **axhline_kwargs)
+            ax.axhline(ps_sens, c=color, **axhline_kwargs)
 
         if hasattr(self, 'actdata') and self.actdata:
             # Get ACT sensitivities using the dedicated method
             act_sensitivities = self._getACTSensitivity()
 
             # Plot ACT lines if values are available
-            color_offset = len(self.uvdata)
+            color_offset_act = len(self.uvdata) + color_offset
             for j, name in enumerate(act_sensitivities):
                 if '150' in act_sensitivities[name] and not np.isnan(act_sensitivities[name]['150']):
-                    ax.plot([0.2, arcsec_to_uvdist(1.4*60)], 
-                           [act_sensitivities[name]['150']*1e6]*2, 
-                           label=f'ACT 150 GHz', c=f'C{color_offset+j*2}', ls='--', **plot_kwargs)
+                    ax.plot([0.2, arcsec_to_uvdist(1.4*60)],
+                           [act_sensitivities[name]['150']*1e6]*2,
+                           label=f'ACT 150 GHz', c=f'C{color_offset_act+j*2}', ls='--', **plot_kwargs)
                 if '090' in act_sensitivities[name] and not np.isnan(act_sensitivities[name]['090']):
-                    ax.plot([0.2, arcsec_to_uvdist(2.0*60)], 
-                           [act_sensitivities[name]['090']*1e6]*2, 
-                           label=f'ACT 90 GHz', c=f'C{color_offset+j*2+1}', ls='--', **plot_kwargs)
+                    ax.plot([0.2, arcsec_to_uvdist(2.0*60)],
+                           [act_sensitivities[name]['090']*1e6]*2,
+                           label=f'ACT 90 GHz', c=f'C{color_offset_act+j*2+1}', ls='--', **plot_kwargs)
 
         if show_label:
             ax.text(0.03, 0.97, f'{self.target}', transform=ax.transAxes, fontsize=9,
                     verticalalignment='top',
                     bbox=dict(boxstyle='round,pad=0.3', edgecolor='black', facecolor='white'))
-        ax.set_xlabel(r'uv-distance [k$\lambda$]', fontsize=9)
-        ax.set_ylabel(r'$\sigma$ [$\mu$Jy]', fontsize=9)
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-        ax.tick_params(axis='x', which='both', top=False, labelsize=9)
-        ax.tick_params(axis='y', labelsize=9)
 
-        ax.axis(xmin=1e0, xmax=3e2)
+        if standalone:
+            ax.set_xlabel(r'uv-distance [k$\lambda$]', fontsize=9)
+            ax.set_ylabel(r'$\sigma$ [$\mu$Jy]', fontsize=9)
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+            ax.tick_params(axis='x', which='both', top=False, labelsize=9)
+            ax.tick_params(axis='y', labelsize=9)
+            ax.axis(xmin=1e0, xmax=3e2)
+            secax = ax.secondary_xaxis('top', functions=(arcsec_to_uvdist, uvdist_to_arcsec))
+            secax.set_xlabel('Spatial scale ["]', fontsize=9)
+            secax.tick_params(labelsize=9)
+            plt.legend(frameon=True, loc=1, fontsize=7)
 
-        secax = ax.secondary_xaxis('top', functions=(arcsec_to_uvdist, uvdist_to_arcsec))
-        secax.set_xlabel('Spatial scale ["]', fontsize=9)
-        secax.tick_params(labelsize=9)
-        plt.legend(frameon=True, loc=1, fontsize=7)
+            if save_plots:
+                _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+                if output_dir is None:
+                    output_dir = f'../plots/VisualizeEszee/{_safe_target}/fourier_sensitivity/'
+                os.makedirs(output_dir, exist_ok=True)
+                _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
+                filename = f'{_prefix}fourier_weight_distributions.png'
+                plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
 
-        if save_plots:
-            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
-            if output_dir is None:
-                output_dir = f'../plots/VisualizeEszee/{_safe_target}/fourier_sensitivity/'
-            os.makedirs(output_dir, exist_ok=True)
-            _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
-            filename = f'{_prefix}fourier_weight_distributions.png'
-            plt.savefig(f'{output_dir}/{filename}', dpi=300, bbox_inches='tight')
-
-        if return_fig:
-            return fig, ax
-
-        plt.show()
+            if return_fig:
+                return fig, ax
+            plt.show()
+        else:
+            if return_fig:
+                return fig, ax

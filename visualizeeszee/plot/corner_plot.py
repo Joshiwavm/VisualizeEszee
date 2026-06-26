@@ -58,18 +58,30 @@ _PARAM_LABELS: dict[str, str] = {
     'ps_ra':       r'RA$_\mathrm{PS}$ [deg]',
     'ps_dec':      r'Dec$_\mathrm{PS}$ [deg]',
     'ps_amp':      r'$S_\nu$ [Jy]',
+    'ps_major':    r"$\theta_\mathrm{PS}$ [deg]",
+    'ps_ellip':    r'$e_\mathrm{PS}$',
+    'ps_angle':    r'$\phi_\mathrm{PS}$ [deg]',
     'ps_offset':   r'offset$_\mathrm{PS}$',
     'ps_specidx':  r'$\alpha_{sl}$',
 }
 
-_PS_PARAM_NAMES = ['ps_ra', 'ps_dec', 'ps_amp', 'ps_offset', 'ps_specidx']
+# eszee gaussSource layout: [RA, Dec, Amp, Major, e, Angle, Offset]
+_PS_PARAM_NAMES       = ['ps_ra', 'ps_dec', 'ps_amp', 'ps_offset', 'ps_specidx']
+_GAUSS_PS_PARAM_NAMES = ['ps_ra', 'ps_dec', 'ps_amp', 'ps_major', 'ps_ellip', 'ps_angle', 'ps_offset']
+_PS_TYPES             = ('pointSource', 'gaussSource')
 
 # Label overrides when a param is scaled by a known factor
 _UNIT_SCALE_LABELS: dict[str, dict[float, str]] = {
-    'r_s':  {60.0: r'$r_s$ [arcmin]', 3600.0: r"$r_s$ ['']"},
-    'ra':   {60.0: r'RA [arcmin]'},
-    'dec':  {60.0: r'Dec [arcmin]'},
-    'angle': {1.0: r'$\theta$ [deg]'},
+    'r_s':     {60.0: r'$r_s$ [arcmin]', 3600.0: r"$r_s$ ['']"},
+    'ra':      {60.0: r'RA [arcmin]'},
+    'dec':     {60.0: r'Dec [arcmin]'},
+    'angle':   {1.0:  r'$\theta$ [deg]'},
+    'ps_major':{3600.0: r"$\theta_\mathrm{PS}$ ['']"},
+}
+
+# Scales applied automatically to these params (user can override via unit_scale_by_name)
+_DEFAULT_UNIT_SCALES: dict[str, float] = {
+    'ps_major': 3600.0,   # degrees → arcsec
 }
 
 _DEFAULT_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
@@ -95,20 +107,30 @@ class PlotCorner:
         raw_names: list[str] = []
         labels: list[str] = []
         vary_list = list(results['vary'][:-1])
-        # Count only non-pointSource components that have ≥1 free model param
+        # Count only cluster components; point-source-like types don't get a _c{n} suffix.
         n_model_compts = sum(
             1 for v in vary_list
-            if v['values']['model'].get('type', '') != 'pointSource'
+            if v['values']['model'].get('type', '') not in _PS_TYPES
             and any(v['values']['model'].get('vary', []))
         )
 
+        cluster_idx = 0
         for j, vary in enumerate(vary_list):
             model_type = vary['values']['model'].get('type', '')
-            suffix = f' (c{j})' if n_model_compts > 1 else ''
-            raw_suffix = f'_c{j}' if n_model_compts > 1 else ''
+            is_ps = model_type in _PS_TYPES
+
+            if is_ps:
+                suffix = ''
+                raw_suffix = ''
+            else:
+                suffix     = f' (c{cluster_idx})' if n_model_compts > 1 else ''
+                raw_suffix = f'_c{cluster_idx}'   if n_model_compts > 1 else ''
+                cluster_idx += 1
 
             if model_type == 'pointSource':
                 param_names = _PS_PARAM_NAMES
+            elif model_type == 'gaussSource':
+                param_names = _GAUSS_PS_PARAM_NAMES
             else:
                 param_names = list(self.get_param_order_from_yaml(model_type))
 
@@ -178,16 +200,25 @@ class PlotCorner:
         vary_list = list(results['vary'][:-1])
         n_model_compts = sum(
             1 for v in vary_list
-            if v['values']['model'].get('type', '') != 'pointSource'
+            if v['values']['model'].get('type', '') not in _PS_TYPES
             and any(v['values']['model'].get('vary', []))
         )
 
+        cluster_idx = 0
         for j, vary in enumerate(vary_list):
             model_type = vary['values']['model'].get('type', '')
-            raw_suffix = f'_c{j}' if n_model_compts > 1 else ''
+            is_ps = model_type in _PS_TYPES
+
+            if is_ps:
+                raw_suffix = ''
+            else:
+                raw_suffix = f'_c{cluster_idx}' if n_model_compts > 1 else ''
+                cluster_idx += 1
 
             if model_type == 'pointSource':
                 param_names = _PS_PARAM_NAMES
+            elif model_type == 'gaussSource':
+                param_names = _GAUSS_PS_PARAM_NAMES
             else:
                 param_names = list(self.get_param_order_from_yaml(model_type))
 
@@ -401,17 +432,18 @@ class PlotCorner:
 
         # ---- Merge name-based unit scales into col_scales ---------------
         col_scales: dict[int, float] = dict(unit_scale or {})
-        if unit_scale_by_name:
-            for param_name, factor in unit_scale_by_name.items():
-                for col_idx, dp in enumerate(display_params):
-                    base = re.sub(r'_c\d+$', '', dp)
-                    if base == param_name:
-                        col_scales[col_idx] = factor
-                        # Update label if a known unit override exists
-                        if labels is None:
-                            lbl_map = _UNIT_SCALE_LABELS.get(param_name, {})
-                            if factor in lbl_map:
-                                display_labels[col_idx] = lbl_map[factor]
+        # Start from defaults; explicit user entries take precedence.
+        _effective_name_scales = dict(_DEFAULT_UNIT_SCALES)
+        _effective_name_scales.update(unit_scale_by_name or {})
+        for param_name, factor in _effective_name_scales.items():
+            for col_idx, dp in enumerate(display_params):
+                base = re.sub(r'_c\d+$', '', dp)
+                if base == param_name and col_idx not in col_scales:
+                    col_scales[col_idx] = factor
+                    if labels is None:
+                        lbl_map = _UNIT_SCALE_LABELS.get(param_name, {})
+                        if factor in lbl_map:
+                            display_labels[col_idx] = lbl_map[factor]
 
         # ---- Per-file: free-column map + frozen value map ---------------
         # free_col_maps[i]: param_raw_name -> column index in samples_i
@@ -426,8 +458,9 @@ class PlotCorner:
             for col_idx, param_name in enumerate(display_params):
                 if param_name not in free_col_map:
                     val = frozen_vals_i.get(param_name)
-                    if val is not None:
-                        file_frozen[col_idx] = val
+                    # Absent params (not free, not frozen) get a sentinel so they
+                    # are excluded from free_disp_idx without causing a KeyError.
+                    file_frozen[col_idx] = val if val is not None else _FROZEN_SENTINEL
             free_col_maps.append(free_col_map)
             all_weights.append(weights_i)
             per_file_frozen.append(file_frozen)
@@ -559,6 +592,8 @@ class PlotCorner:
 
                 # Vlines for frozen params on diagonal panels
                 for col_idx, frozen_val in file_frozen.items():
+                    if frozen_val <= _SENTINEL_THRESHOLD:  # absent in this file
+                        continue
                     ax = axes[col_idx, col_idx] if axes is not None else None
                     if ax is not None:
                         ax.axvline(frozen_val, color=color_i, linestyle='--',
