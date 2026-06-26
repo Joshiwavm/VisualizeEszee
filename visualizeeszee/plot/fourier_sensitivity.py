@@ -148,11 +148,11 @@ class PlotFourierSensitivity:
             ax.set_yscale('log')
             ax.tick_params(axis='x', which='both', top=False, labelsize=9)
             ax.tick_params(axis='y', labelsize=9)
-            ax.axis(xmin=1e0, xmax=1e2)
+            ax.axis(xmin=1e0, xmax=3e2)
             secax = ax.secondary_xaxis('top', functions=(arcsec_to_uvdist, uvdist_to_arcsec))
             secax.set_xlabel('Spatial scale ["]', fontsize=9)
             secax.tick_params(labelsize=9)
-            plt.legend(frameon=False, loc=1, fontsize=7)
+            plt.legend(frameon=True, loc=1, fontsize=7)
 
             if save_plots:
                 _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
