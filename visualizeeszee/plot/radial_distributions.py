@@ -470,7 +470,8 @@ class PlotRadialDistributions:
 
         # Update y-labels to show residual context
         if residual_model is not None:
-            _ref_short = (residual_model.split('_q')[0] if '_q' in residual_model else residual_model).replace('_', ' ')
+            # In math mode plain spaces collapse, so use '~' to keep a visible gap.
+            _ref_short = (residual_model.split('_q')[0] if '_q' in residual_model else residual_model).replace('_', '~')
             axes[0].set_ylabel(fr'Re(V $-$ V$_{{\rm {_ref_short}}}$) [mJy]', fontsize=9)
             axes[1].set_ylabel(fr'Im(V $-$ V$_{{\rm {_ref_short}}}$) [mJy]', fontsize=9)
 

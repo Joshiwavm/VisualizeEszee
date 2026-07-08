@@ -114,7 +114,7 @@ class PlotFourierSensitivity:
 
         for i, name in enumerate(self.uvdata):
             bin_centers, std_binned = self._getWeightDistribution(name)
-            label = label_override if label_override is not None else name
+            label = label_override if label_override is not None else name.replace('Band', 'Band ').replace('_', ' ')
             color = f'C{i + color_offset}'
             ax.plot(bin_centers, std_binned * 1e6, c=color, label=label, **plot_kwargs)
             ps_sens = (1/np.nansum(1/std_binned**2))**0.5*1e6
