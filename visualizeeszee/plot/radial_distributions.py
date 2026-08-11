@@ -383,6 +383,7 @@ class PlotRadialDistributions:
                                 data_zorder: dict | None = None,
                                 ylim_real: tuple | None = None,
                                 ylim_imag: tuple | None = None,
+                                fig=None, axes=None,
                                 **kwargs):
         """
         Plot radial UV distributions.
@@ -398,6 +399,12 @@ class PlotRadialDistributions:
             All other model curves are also shown relative to this reference
             (each curve − reference_curve), so the reference model appears as a
             zero line and deviations highlight differences between models.
+        fig, axes : Figure, (Axes, Axes), optional
+            Draw into these pre-existing (real, imag) axes instead of creating
+            a new 2-row figure -- lets a caller composite several clusters into
+            one larger figure. Skips this call's own tight_layout()/save_plots
+            handling when given (the caller owns figure-level layout/saving).
+            ``fig`` is inferred from ``axes[0].figure`` if omitted.
         """
         if model_name is not None:
             if isinstance(model_name, str):
@@ -439,8 +446,12 @@ class PlotRadialDistributions:
         else:
             raise ValueError("nbins must be an integer or a list of integers")
 
-        fig, axes = plt.subplots(2, 1, sharex=True, figsize=(4, 5),
-                                 gridspec_kw={'height_ratios': [4, 1], 'hspace': 0.0})
+        _own_fig = axes is None
+        if _own_fig:
+            fig, axes = plt.subplots(2, 1, sharex=True, figsize=(4, 5),
+                                     gridspec_kw={'height_ratios': [4, 1], 'hspace': 0.0})
+        elif fig is None:
+            fig = axes[0].figure
 
         ylim_real_arg = ylim_real if ylim_real is not None else ((-4, 0.6) if residual_model is None else (-1.3, 1))
         ylim_imag_arg = ylim_imag if ylim_imag is not None else ((-0.4, 0.4) if residual_model is None else None)
@@ -656,18 +667,20 @@ class PlotRadialDistributions:
         else:
             axes[0].legend(frameon=False, loc='lower right', fontsize=7)
 
-        plt.tight_layout()
+        if _own_fig:
+            fig.tight_layout()
 
-        if save_plots:
-            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
-            _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
-            _resid_suffix = '_residual' if residual_model is not None else ''
-            _base = 'UVradial_data_combined' if data_name is None else f'UVradial_{data_name}'
-            filename = _prefix + _base + _resid_suffix + '.png'
-            out_path = os.path.join(output_dir, filename)
-            plt.savefig(out_path, dpi=300, bbox_inches='tight')
-            print(f"Saved plot: {out_path}")
-        
+            if save_plots:
+                _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+                _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
+                _resid_suffix = '_residual' if residual_model is not None else ''
+                _base = 'UVradial_data_combined' if data_name is None else f'UVradial_{data_name}'
+                filename = _prefix + _base + _resid_suffix + '.png'
+                out_path = os.path.join(output_dir, filename)
+                fig.savefig(out_path, dpi=300, bbox_inches='tight')
+                print(f"Saved plot: {out_path}")
+
         if return_fig:
             return fig, axes
-        plt.show()
+        if _own_fig:
+            plt.show()

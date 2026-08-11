@@ -108,7 +108,8 @@ class DataHandler:
                         norm = KcmbToJyPix(150e9, header['CDELT1'], header['CDELT2']) *1e-6
                         npix = np.pi * 1.4* 1.4/(4*np.log(2)) / (np.abs(header['CDELT1']*header['CDELT2'])*3600)
                     else:
-                        norm = 1.0
+                        # Only 090/150 are consumed downstream (_getACTSensitivity); skip others.
+                        continue
                     std = np.mean(data_image) ** -0.5 * norm / npix
                     actdata[freq][arr] = actdata[freq][arr]._replace(std=std)
             self.data['act'][name] = actdata

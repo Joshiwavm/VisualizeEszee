@@ -43,6 +43,7 @@ class PlotMaps:
                  center: Tuple[float, float] | None = None,
                  show_neg_contours: bool = True,
                  show_model_contours: bool = True,
+                 fig=None, axes=None,
                  **imshow_kwargs):
         """Plot one or multiple map types in a single row.
 
@@ -67,6 +68,13 @@ class PlotMaps:
         show_model_contours : bool
             Overlay smoothed model contours (black) on the ``deconvolved`` panel.
             Requires ``show_neg_contours=True`` to also be set.
+        fig, axes : Figure, array-like of Axes, optional
+            Draw into these pre-existing axes (one per requested type, same
+            order) instead of creating a new figure -- lets a caller composite
+            several clusters/panels into one larger figure. When given, this
+            call skips its own ``tight_layout()``/``save_plots`` handling
+            (the caller owns figure-level layout and saving). ``fig`` is
+            inferred from ``axes[0].figure`` if omitted.
         """
 
         def _add_beam(ax, header):
@@ -214,8 +222,15 @@ class PlotMaps:
             vmax = -vmin
 
         n = len(panels)
-        fig, axes = plt.subplots(1, n, figsize=(4 * n, 4), squeeze=False)
-        axes = axes[0]
+        _own_fig = axes is None
+        if _own_fig:
+            fig, axes = plt.subplots(1, n, figsize=(4 * n, 4), squeeze=False)
+            axes = axes[0]
+        else:
+            if len(axes) != n:
+                raise ValueError(f"Expected {n} axes for panel(s) {[p[0] for p in panels]}, got {len(axes)}")
+            if fig is None:
+                fig = axes[0].figure
 
         for ax, (name, arr, unit) in zip(axes, panels):
             im_kwargs = dict(origin='lower', cmap=cmap)
@@ -280,14 +295,15 @@ class PlotMaps:
             cb.set_label(unit)
             cb.ax.get_yaxis().set_visible(False)
 
-        plt.tight_layout()
-        if save_plots:
-            _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
-            _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
-            if output_dir is None:
-                output_dir = f'../plots/VisualizeEszee/{_safe_target}/maps/'
-            os.makedirs(output_dir, exist_ok=True)
-            out = filename or f"{_prefix}maps_{model_name}_{data_name}_{fkey}_{skey}_{'_'.join(map_types)}.png"
-            fig.savefig(os.path.join(output_dir, out), dpi=300, bbox_inches='tight')
+        if _own_fig:
+            fig.tight_layout()
+            if save_plots:
+                _safe_target = str(getattr(self, 'target', None) or 'unknown').replace(' ', '_')
+                _prefix = f"{_safe_target}_" if getattr(self, 'target', None) else ''
+                if output_dir is None:
+                    output_dir = f'../plots/VisualizeEszee/{_safe_target}/maps/'
+                os.makedirs(output_dir, exist_ok=True)
+                out = filename or f"{_prefix}maps_{model_name}_{data_name}_{fkey}_{skey}_{'_'.join(map_types)}.png"
+                fig.savefig(os.path.join(output_dir, out), dpi=300, bbox_inches='tight')
         if return_fig:
             return fig, axes

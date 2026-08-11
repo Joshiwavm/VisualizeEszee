@@ -408,7 +408,7 @@ class PlotPointSourceSpectra:
                                   aperture_arcsec=10.0, save_plots=False,
                                   output_dir=None,
                                   use_style=True, return_fig=False,
-                                  n_model_pts=300, log_log=True,
+                                  n_model_pts=300, log_log=True, ylim=None,
                                   plot_maps=False, save_ps_fits=False,
                                   **kwargs):
         if use_style:
@@ -458,9 +458,11 @@ class PlotPointSourceSpectra:
 
             if log_log:
                 ax.set_xscale('log'); ax.set_yscale('log')
-                ax.set_ylim(1e-3, 1e0)
+                ax.set_ylim(*(ylim if ylim is not None else (1e-3, 1e0)))
             else:
                 ax.axhline(0, ls='--', c='gray', alpha=0.5, lw=0.8)
+                if ylim is not None:
+                    ax.set_ylim(*ylim)
             ax.set_xlabel('Frequency [GHz]')
             ax.set_ylabel('Flux [mJy]')
             ax.set_title(f'PS {pi + 1}  ({ps["ra"]:.4f}°, {ps["dec"]:.4f}°)')

@@ -185,6 +185,7 @@ class PlotParameterTable:
         output_dir: str | None = None,
         sig_figs: int = 3,
         caption: str | None = None,
+        baseline_fname: str | None = None,
     ) -> ParameterTableResult:
         """Build a multi-model parameter table suitable for LaTeX export.
 
@@ -217,6 +218,12 @@ class PlotParameterTable:
             Defaults to ``../plots/VisualizeEszee/{target}/table/``.
         sig_figs : int
             Significant figures used in cell strings.
+        baseline_fname : str, optional
+            Path to a baseline pickle (e.g. a PS-only fit). When given, every
+            row's evidence is ΔlnZ relative to *this* baseline's logZ instead
+            of that row's own ``loglnull`` (fully-null) value -- e.g. to
+            isolate an SZ detection specifically from continuum-source
+            emission rather than reporting significance vs no signal at all.
 
         Returns
         -------
@@ -348,12 +355,18 @@ class PlotParameterTable:
         # ------------------------------------------------------------------
         # Bayesian evidence per model
         # ------------------------------------------------------------------
+        baseline_logz = None
+        if baseline_fname is not None:
+            _rb = np.load(baseline_fname, allow_pickle=True)
+            baseline_logz = float(np.asarray(_rb['samples']['logz'])[-1])
+
         evidence: Dict[str, tuple[float, float]] = {}
         for label, fname in fnames.items():
             try:
                 r = np.load(fname, allow_pickle=True)
                 logz = float(np.asarray(r['samples']['logz'])[-1])
-                lognull = float(r['loglnull']) if 'loglnull' in r else 0.0
+                lognull = baseline_logz if baseline_logz is not None else (
+                    float(r['loglnull']) if 'loglnull' in r else 0.0)
                 delta = logz - lognull
                 sigma = float(np.sign(delta) * np.sqrt(2.0 * abs(delta)))
                 evidence[label] = (delta, sigma)
