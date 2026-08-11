@@ -5,9 +5,10 @@ from .maps import PlotMaps
 from .corner_plot import PlotCorner
 from .ps_spectra import PlotPointSourceSpectra
 from .parameter_table import PlotParameterTable
+from .prior_table import PlotPriorTable
 
 __all__ = ['PlotGatherer']
 
-class PlotGatherer(PlotFourierSensitivity, PlotRadialDistributions, PlotPressureProfiles, PlotMaps, PlotCorner, PlotPointSourceSpectra, PlotParameterTable):
+class PlotGatherer(PlotFourierSensitivity, PlotRadialDistributions, PlotPressureProfiles, PlotMaps, PlotCorner, PlotPointSourceSpectra, PlotParameterTable, PlotPriorTable):
     """Composite plotting mixin aggregating all plot types."""
     pass
