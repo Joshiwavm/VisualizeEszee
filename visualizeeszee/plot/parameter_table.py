@@ -187,7 +187,7 @@ class PlotParameterTable:
         caption: str | None = None,
         baseline_fname: str | None = None,
         y_scatter: float | None = None,
-        y_m_slope: float = 1.08,
+        y_m_slope: float = 1.79,
     ) -> ParameterTableResult:
         r"""Build a multi-model parameter table suitable for LaTeX export.
 
@@ -238,10 +238,13 @@ class PlotParameterTable:
         y_m_slope : float
             Slope d ln y / d ln M500 of the assumed scaling relation, used
             to convert ``y_scatter`` into a scatter in mass.  Defaults to
-            1.08, the ACT DR5 value (1 + B0 with B0 = 0.08, as in nemo).
-            Use 5/3 + alpha_p ~ 1.79 instead if the relevant observable is
-            the integrated Y500 of the A10 profile rather than the ACT
-            filtered central signal.
+            1.79, the Ysph(R500)-M500 slope of Arnaud et al. (2010, Eq. 20,
+            1.790 +/- 0.015 = 5/3 + alpha_p), appropriate here because the
+            fit constrains the whole profile, i.e. an integrated-Y-like
+            observable.  Note that nemo's 1 + B0 = 1.08 is *not* the full
+            d ln y / d ln M: it is the explicit power law only, with more
+            mass dependence carried by Q(theta500) and f_rel, so using it
+            here would overestimate the induced mass scatter.
 
         Returns
         -------
