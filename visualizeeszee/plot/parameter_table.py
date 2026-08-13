@@ -186,7 +186,8 @@ class PlotParameterTable:
         sig_figs: int = 3,
         caption: str | None = None,
         baseline_fname: str | None = None,
-        mass_scatter: float | None = None,
+        y_scatter: float | None = None,
+        y_m_slope: float = 1.08,
     ) -> ParameterTableResult:
         r"""Build a multi-model parameter table suitable for LaTeX export.
 
@@ -225,15 +226,22 @@ class PlotParameterTable:
             of that row's own ``loglnull`` (fully-null) value -- e.g. to
             isolate an SZ detection specifically from continuum-source
             emission rather than reporting significance vs no signal at all.
-        mass_scatter : float, optional
-            Log-normal intrinsic scatter of the mass--observable relation,
-            as a dispersion in *natural* log (e.g. 0.2, the value assumed
-            for the ACT DR5 masses; nemo applies it to ln y0, not dex).
-            Combined in quadrature with the statistical error in ln M and
-            converted back to linear errors, which makes them mildly
-            asymmetric, so the quoted mass uncertainty includes the
-            scaling-relation scatter rather than only the statistical
-            precision of the fit.
+        y_scatter : float, optional
+            Log-normal intrinsic scatter of the SZ signal at fixed mass, as
+            a dispersion in *natural* log of the observable (ACT DR5 assumes
+            0.2; nemo applies sigma_int to ln y0, not to log10).  It is
+            divided by ``y_m_slope`` to give the induced scatter in ln M,
+            combined in quadrature with the statistical error in ln M, and
+            converted back to linear errors -- which makes them mildly
+            asymmetric -- so the quoted mass includes the scaling-relation
+            scatter rather than only the statistical precision of the fit.
+        y_m_slope : float
+            Slope d ln y / d ln M500 of the assumed scaling relation, used
+            to convert ``y_scatter`` into a scatter in mass.  Defaults to
+            1.08, the ACT DR5 value (1 + B0 with B0 = 0.08, as in nemo).
+            Use 5/3 + alpha_p ~ 1.79 instead if the relevant observable is
+            the integrated Y500 of the A10 profile rather than the ACT
+            filtered central signal.
 
         Returns
         -------
@@ -365,13 +373,13 @@ class PlotParameterTable:
         # ------------------------------------------------------------------
         # Intrinsic scatter of the mass--observable relation
         # ------------------------------------------------------------------
-        if mass_scatter is not None:
+        if y_scatter is not None:
+            sig_lnM = y_scatter / y_m_slope
             for df in raw.values():
                 if 'mass' in df.index and not df.loc['mass', 'frozen']:
                     med = df.loc['mass', 'median']
                     for side, sign in (('err_lo', -1.0), ('err_hi', 1.0)):
-                        sig_ln = np.hypot(df.loc['mass', side] / med,
-                                          mass_scatter)
+                        sig_ln = np.hypot(df.loc['mass', side] / med, sig_lnM)
                         df.loc['mass', side] = med * abs(np.expm1(sign * sig_ln))
 
         # ------------------------------------------------------------------
