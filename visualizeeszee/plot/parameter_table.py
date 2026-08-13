@@ -186,8 +186,9 @@ class PlotParameterTable:
         sig_figs: int = 3,
         caption: str | None = None,
         baseline_fname: str | None = None,
+        mass_scatter: float | None = None,
     ) -> ParameterTableResult:
-        """Build a multi-model parameter table suitable for LaTeX export.
+        r"""Build a multi-model parameter table suitable for LaTeX export.
 
         Rows = model runs, columns = parameters.
         Parameters from different model types sharing the same name (e.g. 'ra',
@@ -224,6 +225,13 @@ class PlotParameterTable:
             of that row's own ``loglnull`` (fully-null) value -- e.g. to
             isolate an SZ detection specifically from continuum-source
             emission rather than reporting significance vs no signal at all.
+        mass_scatter : float, optional
+            Log-normal intrinsic scatter of the mass--observable relation
+            (sigma in ln M, e.g. 0.2 as assumed for the ACT DR5 masses).
+            Added in quadrature to the statistical mass errors as
+            ``mass_scatter * median`` per side, so the quoted mass
+            uncertainty includes the scaling-relation scatter rather than
+            only the statistical precision of the fit.
 
         Returns
         -------
@@ -351,6 +359,18 @@ class PlotParameterTable:
                 df.loc['dec', 'median'] = (df.loc['dec', 'median'] - dec_center) * 3600
                 df.loc['dec', 'err_lo'] *= 3600
                 df.loc['dec', 'err_hi'] *= 3600
+
+        # ------------------------------------------------------------------
+        # Intrinsic scatter of the mass--observable relation
+        # ------------------------------------------------------------------
+        if mass_scatter is not None:
+            for df in raw.values():
+                if 'mass' in df.index and not df.loc['mass', 'frozen']:
+                    sig_int = mass_scatter * df.loc['mass', 'median']
+                    for side in ('err_lo', 'err_hi'):
+                        df.loc['mass', side] = np.sqrt(
+                            df.loc['mass', side] ** 2 + sig_int ** 2
+                        )
 
         # ------------------------------------------------------------------
         # Bayesian evidence per model
