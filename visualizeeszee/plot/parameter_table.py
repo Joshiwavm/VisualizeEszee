@@ -226,12 +226,14 @@ class PlotParameterTable:
             isolate an SZ detection specifically from continuum-source
             emission rather than reporting significance vs no signal at all.
         mass_scatter : float, optional
-            Log-normal intrinsic scatter of the mass--observable relation
-            (sigma in ln M, e.g. 0.2 as assumed for the ACT DR5 masses).
-            Added in quadrature to the statistical mass errors as
-            ``mass_scatter * median`` per side, so the quoted mass
-            uncertainty includes the scaling-relation scatter rather than
-            only the statistical precision of the fit.
+            Log-normal intrinsic scatter of the mass--observable relation,
+            as a dispersion in *natural* log (e.g. 0.2, the value assumed
+            for the ACT DR5 masses; nemo applies it to ln y0, not dex).
+            Combined in quadrature with the statistical error in ln M and
+            converted back to linear errors, which makes them mildly
+            asymmetric, so the quoted mass uncertainty includes the
+            scaling-relation scatter rather than only the statistical
+            precision of the fit.
 
         Returns
         -------
@@ -366,11 +368,11 @@ class PlotParameterTable:
         if mass_scatter is not None:
             for df in raw.values():
                 if 'mass' in df.index and not df.loc['mass', 'frozen']:
-                    sig_int = mass_scatter * df.loc['mass', 'median']
-                    for side in ('err_lo', 'err_hi'):
-                        df.loc['mass', side] = np.sqrt(
-                            df.loc['mass', side] ** 2 + sig_int ** 2
-                        )
+                    med = df.loc['mass', 'median']
+                    for side, sign in (('err_lo', -1.0), ('err_hi', 1.0)):
+                        sig_ln = np.hypot(df.loc['mass', side] / med,
+                                          mass_scatter)
+                        df.loc['mass', side] = med * abs(np.expm1(sign * sig_ln))
 
         # ------------------------------------------------------------------
         # Bayesian evidence per model
