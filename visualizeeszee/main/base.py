@@ -3,12 +3,11 @@ import re as _re
 from ..loading import Loader
 from ..plot import PlotGatherer
 from ..fourier import FourierManager, Deconvolve
-from ..utils.utils import JyBeamToJyPix, smooth, extract_plane as utils_extract_plane, get_map_beam_and_pix as utils_get_map_beam_and_pix
+from ..utils.utils import JyBeamToJyPix, smooth, extract_plane as utils_extract_plane, get_map_beam_and_pix as utils_get_map_beam_and_pix, cosmo
 import warnings
 import os
 import numpy as np
 from astropy.io import fits
-from astropy.cosmology import FlatLambdaCDM
 from astropy import units as _u, constants as _const
 
 class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
@@ -130,7 +129,6 @@ class Manager(Loader, FourierManager, Deconvolve, PlotGatherer):
                 bias = float(mparams.get('bias', 0.0))
                 P0   = float(mparams.get('p_norm', 0.0))
                 fb, mu, mue = 0.175, 0.590, 1.140
-                cosmo = FlatLambdaCDM(H0=70.0, Om0=0.3)
                 Hz       = cosmo.H(z)
                 rho_crit = cosmo.critical_density(z)
                 D_A      = cosmo.angular_diameter_distance(z).to(_u.Mpc).value

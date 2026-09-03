@@ -2,7 +2,9 @@ import numpy as np
 from astropy import constants as const
 from astropy import units as u
 from astropy.convolution import convolve_fft, Gaussian2DKernel
-from astropy.cosmology import Planck18 as cosmo
+from astropy.cosmology import FlatLambdaCDM
+
+cosmo = FlatLambdaCDM(H0=70.0, Om0=0.3)
 
 import scipy.special
 import scipy.integrate as _scint
@@ -17,7 +19,7 @@ ysznorm = (const.sigma_T / const.m_e / const.c**2).to(u.cm**3 / u.keV / u.Mpc)
 
 def calculate_r500(mass, redshift):
     """Calculate R500 in kpc for given mass (M500 in solar masses) and redshift.
-    Uses the cosmology imported here (Planck15) for consistency with utils.
+    Uses the cosmology imported here (FlatLambdaCDM H0=70, Om0=0.3).
     """
     rho_crit = cosmo.critical_density(redshift)  # mass density (Quantity)
     mass_kg = (mass * u.M_sun).to(u.kg)
