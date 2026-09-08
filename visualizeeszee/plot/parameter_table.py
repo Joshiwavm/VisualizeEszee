@@ -186,6 +186,7 @@ class PlotParameterTable:
         sig_figs: int = 3,
         caption: str | None = None,
         baseline_fname: str | None = None,
+        logz_offsets: Dict[str, float] | None = None,
         y_scatter: float | None = None,
         y_m_slope: float = 1.79,
     ) -> ParameterTableResult:
@@ -226,6 +227,17 @@ class PlotParameterTable:
             of that row's own ``loglnull`` (fully-null) value -- e.g. to
             isolate an SZ detection specifically from continuum-source
             emission rather than reporting significance vs no signal at all.
+        logz_offsets : dict {label: offset}, optional
+            Added to each row's logZ before ΔlnZ and σ are formed.  Intended
+            for prior-volume matching: when two runs of the same model differ
+            only in the width of a uniform prior box, the wider one carries an
+            Occam penalty that comes from the box rather than the data, and
+            ``+ln(W/W_ref)`` per affected parameter removes it -- so
+            differencing two rows of the ΔlnZ column gives a Bayes factor that
+            is not contaminated by the prior choice.  Keys follow the same
+            convention as ``fnames``, and are renamed by ``name_map`` too.
+            The baseline is deliberately *not* offset, so the first row stays
+            a genuine detection significance against it.
         y_scatter : float, optional
             Log-normal intrinsic scatter of the SZ signal at fixed mass, as
             a dispersion in *natural* log of the observable (ACT DR5 assumes
@@ -254,6 +266,9 @@ class PlotParameterTable:
         """
         if name_map:
             fnames = {name_map.get(k, k): v for k, v in fnames.items()}
+            if logz_offsets:
+                logz_offsets = {name_map.get(k, k): v
+                                for k, v in logz_offsets.items()}
 
         # Default unit scaling (user unit_scale takes precedence)
         _DEFAULT_SCALE = {'mass': 1e-14, 'r_s': 3600}
@@ -398,6 +413,7 @@ class PlotParameterTable:
             try:
                 r = np.load(fname, allow_pickle=True)
                 logz = float(np.asarray(r['samples']['logz'])[-1])
+                logz += (logz_offsets or {}).get(label, 0.0)
                 lognull = baseline_logz if baseline_logz is not None else (
                     float(r['loglnull']) if 'loglnull' in r else 0.0)
                 delta = logz - lognull
