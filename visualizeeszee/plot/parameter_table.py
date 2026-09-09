@@ -93,8 +93,14 @@ class PlotParameterTable:
                 except (IndexError, TypeError, KeyError):
                     v16 = v50 = v84 = np.nan
 
-                if unit_scale and key in unit_scale:
-                    factor = unit_scale[key]
+                # A type-qualified entry ('gnfwEmulator.p_norm') wins over a
+                # bare one ('p_norm'), so a parameter shared by several model
+                # types can be rescaled for one of them only.
+                factor = None
+                if unit_scale:
+                    factor = unit_scale.get(f'{model_type}.{key}',
+                                            unit_scale.get(key))
+                if factor is not None:
                     v16 *= factor
                     v50 *= factor
                     v84 *= factor
@@ -271,7 +277,11 @@ class PlotParameterTable:
                                 for k, v in logz_offsets.items()}
 
         # Default unit scaling (user unit_scale takes precedence)
-        _DEFAULT_SCALE = {'mass': 1e-14, 'r_s': 3600}
+        # gnfwEmulator's p_norm is ~0.03 and would print with a run of
+        # leading zeros; quote it (and its errors) in units of 1e-3.
+        # A10Pressure's p_norm is a frozen 8.403 and is left alone.
+        _DEFAULT_SCALE = {'mass': 1e-14, 'r_s': 3600,
+                          'gnfwEmulator.p_norm': 1e3}
         effective_scale = {**_DEFAULT_SCALE, **(unit_scale or {})}
 
         # Parameters to skip entirely
@@ -513,6 +523,15 @@ class PlotParameterTable:
 
             nice_df.to_csv(csv_path)
             _caption = caption if caption is not None else f'{_safe_target} model parameters'
+            _pn = effective_scale.get('gnfwEmulator.p_norm')
+            if _pn and 'p_norm' in final_params:
+                if not _caption.rstrip().endswith(('.', '!', '?')):
+                    _caption = _caption.rstrip() + '.'
+                _exp = -int(round(np.log10(_pn)))
+                _caption += (f' gNFW $p_\\mathrm{{norm}}$ values and '
+                             f'uncertainties are quoted in units of '
+                             f'$10^{{{_exp}}}$; A10 $p_\\mathrm{{norm}}$ is '
+                             f'frozen and unscaled.')
             latex_df.to_latex(
                 tex_path,
                 escape=False,
