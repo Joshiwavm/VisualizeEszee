@@ -355,14 +355,28 @@ class PlotParameterTable:
         # ------------------------------------------------------------------
         # Load posteriors
         # ------------------------------------------------------------------
+        # One entry per image-plane component, not per model: a 2-halo fit has
+        # two A10Pressure/gnfwEmulator components and both belong in the table.
+        # _load_param_rows labels them '<type>_c<j>.<param>', so group on that
+        # prefix -- collapsing to the bare parameter name and dropping
+        # duplicates would silently keep only the first halo.
         raw: Dict[str, pd.DataFrame] = {}
+        row_model: Dict[str, str] = {}    # row key -> model label it belongs to
+        row_first: Dict[str, bool] = {}   # row key -> is this the model's 1st row
         for label, fname in fnames.items():
-            df = self._load_param_rows(fname, unit_scale=effective_scale)
-            df = df[~df.index.str.startswith('calib.')]
-            df.index = pd.Index([p.split('.')[-1] for p in df.index], name='param')
-            df = df[~df.index.isin(_SKIP_PARAMS)]
-            df = df[~df.index.duplicated(keep='first')]
-            raw[label] = df
+            df_all = self._load_param_rows(fname, unit_scale=effective_scale)
+            df_all = df_all[~df_all.index.str.startswith('calib.')]
+            comps = [p.rsplit('.', 1)[0] for p in df_all.index]
+            for n, comp in enumerate(list(dict.fromkeys(comps))):
+                df = df_all[[c == comp for c in comps]].copy()
+                df.index = pd.Index([p.rsplit('.', 1)[-1] for p in df.index],
+                                    name='param')
+                df = df[~df.index.isin(_SKIP_PARAMS)]
+                df = df[~df.index.duplicated(keep='first')]
+                key = label if n == 0 else f'{label}#{n}'
+                raw[key] = df
+                row_model[key] = label
+                row_first[key] = (n == 0)
 
         # ------------------------------------------------------------------
         # RA/Dec offset transform (arcsec, cos-corrected for RA)
@@ -435,8 +449,8 @@ class PlotParameterTable:
         # ------------------------------------------------------------------
         # Build both cell grids
         # ------------------------------------------------------------------
-        latex_rows: Dict[str, list] = {lbl: [] for lbl in fnames}
-        nice_rows:  Dict[str, list] = {lbl: [] for lbl in fnames}
+        latex_rows: Dict[str, list] = {k: [] for k in raw}
+        nice_rows:  Dict[str, list] = {k: [] for k in raw}
 
         for param in final_params:
             for lbl, df in raw.items():
@@ -452,8 +466,14 @@ class PlotParameterTable:
         ev_latex_col_hdr = r'$\Delta\ln\mathcal{Z}\ (\sigma)$'
         ev_nice_col_hdr  = 'ΔlnZ (σ)'
         _first_delta = evidence[next(iter(fnames))][0]
-        for i, lbl in enumerate(fnames):
-            delta, sigma = evidence[lbl]
+        for i, lbl in enumerate(raw):
+            # Continuation rows (the 2nd halo of a 2-halo fit) share their
+            # model's evidence, so leave the cell blank rather than repeat it.
+            if not row_first[lbl]:
+                latex_rows[lbl].append('')
+                nice_rows[lbl].append('')
+                continue
+            delta, sigma = evidence[row_model[lbl]]
             if np.isnan(delta):
                 latex_rows[lbl].append('—')
                 nice_rows[lbl].append('—')
@@ -469,10 +489,15 @@ class PlotParameterTable:
         latex_cols = [_LATEX_NAMES.get(p, p) for p in final_params] + [ev_latex_col_hdr]
         nice_cols  = [_NICE_NAMES.get(p, p)  for p in final_params] + [ev_nice_col_hdr]
 
+        # One name, several rows: the model label sits on its first component
+        # and continuation rows are blank, so a 2-halo fit reads as one entry
+        # spanning two lines.
+        _index = pd.Index([row_model[k] if row_first[k] else ''
+                           for k in raw], name='Model')
         latex_df = pd.DataFrame(latex_rows, index=latex_cols).T
-        latex_df.index.name = 'Model'
+        latex_df.index = _index
         nice_df  = pd.DataFrame(nice_rows,  index=nice_cols).T
-        nice_df.index.name  = 'Model'
+        nice_df.index = _index
 
         # ------------------------------------------------------------------
         # Save
