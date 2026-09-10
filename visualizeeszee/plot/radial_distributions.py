@@ -381,6 +381,7 @@ class PlotRadialDistributions:
                                 residual_model: str | None = None,
                                 show_bands: bool = True,
                                 data_zorder: dict | None = None,
+                                model_styles: dict | None = None,
                                 ylim_real: tuple | None = None,
                                 ylim_imag: tuple | None = None,
                                 fig=None, axes=None,
@@ -399,6 +400,11 @@ class PlotRadialDistributions:
             All other model curves are also shown relative to this reference
             (each curve − reference_curve), so the reference model appears as a
             zero line and deviations highlight differences between models.
+        model_styles : dict or None
+            {base model name: matplotlib kwargs} overriding that model's curve
+            style; applied to its legend proxy too, so curve and key stay in
+            step. Without it a model curve takes the dataset colour and a
+            linestyle cycled by encounter order.
         fig, axes : Figure, (Axes, Axes), optional
             Draw into these pre-existing (real, imag) axes instead of creating
             a new 2-row figure -- lets a caller composite several clusters into
@@ -559,6 +565,14 @@ class PlotRadialDistributions:
                     ls    = model_linestyles_map[base_name]
                     hatch = model_hatches_map[base_name]
 
+                    # Caller override, so one curve can be styled explicitly
+                    # (e.g. a prediction drawn black dashed under the fits).
+                    _style = dict(lw=1.5, ls=ls, c=dataset_color,
+                                  zorder=_model_zorder)
+                    _style.update((model_styles or {}).get(base_name, {}))
+                    # curves carry no label; the legend is built from proxies
+                    _style.pop('label', None)
+
                     # Identify median quantile key
                     _q_keys = [q for q in q_dict if q is not None]
                     q_med = min(_q_keys, key=lambda q: abs(q - 0.5)) if _q_keys else None
@@ -579,8 +593,8 @@ class PlotRadialDistributions:
                         real_plot = real_50
                         imag_plot = imag_50
 
-                    axes[0].plot(k_vals, real_plot * 1e3, lw=1.5, ls=ls, c=dataset_color, label='__nolegend__', zorder=_model_zorder)
-                    axes[1].plot(k_vals, imag_plot * 1e3, lw=1.5, ls=ls, c=dataset_color, label='__nolegend__', zorder=_model_zorder)
+                    axes[0].plot(k_vals, real_plot * 1e3, label='__nolegend__', **_style)
+                    axes[1].plot(k_vals, imag_plot * 1e3, label='__nolegend__', **_style)
 
                     # Quantile band (requires both q16 and q84)
                     if 0.16 in q_dict and 0.84 in q_dict:
@@ -638,8 +652,21 @@ class PlotRadialDistributions:
                 color = f"C{i % 10}"
                 proxy_handles.append(Line2D([0], [0], ls='', marker='D', markerfacecolor='white',
                                             markeredgecolor=color, color=color, label=dn.replace('_', ' ')))
-            model_legend_handles = [Line2D([0], [0], color='black', lw=1.5, linestyle=ls, label=mn.replace('_', ' '))
-                                    for mn, ls in model_linestyles_map.items()] if model_linestyles_map else []
+            def _model_proxy(mn, ls):
+                st = dict(color='black', lw=1.5, linestyle=ls,
+                          label=mn.replace('_', ' '))
+                ov = dict((model_styles or {}).get(mn, {}))
+                if 'c' in ov:
+                    ov['color'] = ov.pop('c')
+                if 'ls' in ov:
+                    ov['linestyle'] = ov.pop('ls')
+                st.update(ov)
+                st.pop('zorder', None)
+                return Line2D([0], [0], **st)
+
+            model_legend_handles = [_model_proxy(mn, ls)
+                                    for mn, ls in model_linestyles_map.items()
+                                    ] if model_linestyles_map else []
             if legend_layout == 'stacked_right' and model_legend_handles:
                 # Models at lower-right; Data stacked above it.
                 # Right-align entries + titles (markers after labels, flush right).
