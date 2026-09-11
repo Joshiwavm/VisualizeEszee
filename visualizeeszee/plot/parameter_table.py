@@ -25,13 +25,18 @@ class ParameterTableResult:
         self.latex = latex
 
     def _repr_html_(self):
-        return self.display.style.set_properties(**{
+        # A multi-component fit repeats its model label as a blank on the
+        # continuation row, so the index is deliberately non-unique --
+        # Styler.map rejects that. Style a positionally-indexed copy and put
+        # the labels back with relabel_index.
+        df = self.display
+        return (df.reset_index(drop=True).style.set_properties(**{
             'text-align': 'center',
             'white-space': 'nowrap',
         }).set_table_styles([
             {'selector': 'th', 'props': [('text-align', 'center')]},
             {'selector': 'th.row_heading', 'props': [('text-align', 'left')]},
-        ])._repr_html_()
+        ]).relabel_index(list(df.index), axis=0)._repr_html_())
 
     def __repr__(self):
         return self.display.__repr__()
