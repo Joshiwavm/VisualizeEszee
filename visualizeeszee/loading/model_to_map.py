@@ -24,6 +24,8 @@ import jax.numpy as jnp
 
 from ..model.unitwrapper import TransformInput
 from ..model.models import a10Profile, gnfwProfile, betaProfile
+from ..model.models import (morphmodels, morphpars, sloshGrid, sloshNorm,
+                            multiPole)
 from ..utils import ysznorm, cosmo
 
 
@@ -50,6 +52,14 @@ class MapMaking:
 
     @staticmethod
     def make_radial_grid(ra_map, dec_map, model_params):
+        """Rotated elliptical-frame coordinates and radius, in degrees.
+
+        Returns (x, y, r) with the axis ratio already folded into y, so
+        r is exactly hypot(x, y) and any azimuth measured off x and y
+        shares the frame of the radius used for the profile lookup.
+        Taking arctan2 of the unscaled components instead would give
+        the circular-frame azimuth, which is wrong for e != 0.
+        """
         ra_center = model_params.get('ra')
         dec_center = model_params.get('dec')
         angle = model_params.get('angle', 0)
@@ -59,7 +69,8 @@ class MapMaking:
         sint = np.sin(np.deg2rad(angle))
         modgrid_x = (-(ra_map - ra_center) * cosy * sint - (dec_map - dec_center) * cost)
         modgrid_y = ((ra_map - ra_center) * cosy * cost - (dec_map - dec_center) * sint)
-        return np.sqrt(modgrid_x**2 + modgrid_y**2 / (1.0 - eccentricity)**2)
+        modgrid_y = modgrid_y / (1.0 - eccentricity)
+        return modgrid_x, modgrid_y, np.hypot(modgrid_x, modgrid_y)
 
     @staticmethod
     def generate_model_from_parameters(model_type, parameters, ra_map, dec_map, header,
@@ -99,12 +110,19 @@ class MapMaking:
                                   input_par.get('e'),
                                   input_par['beta'])
 
-        r_grid = MapMaking.make_radial_grid(ra_map, dec_map, parameters['model'])
+        morph = model_type in morphmodels
+        hmag, hang, mmag, mang = morphpars(parameters['model']) if morph \
+            else (0.00, 0.00, np.zeros(4), np.zeros(4))
+
+        gridx, gridy, r_grid = MapMaking.make_radial_grid(ra_map, dec_map, parameters['model'])
+        r_grid = sloshGrid(r_grid, gridx, gridy, hmag, hang)
+
         z = parameters['model'].get('redshift', parameters['model'].get('z'))
         r_phys_mpc = np.deg2rad(r_grid) * cosmo.angular_diameter_distance(z).to('Mpc').value
         coord = r_phys_mpc / input_par.get('major')
         model_map = np.interp(coord, rs_sample, profile, left=profile[0], right=profile[-1])
         model_map = model_map * ysznorm
+        model_map = model_map * sloshNorm(hmag) * multiPole(gridx, gridy, mmag, mang)
         return model_map
 
     # -------------------------- Marganalize ---------------------------

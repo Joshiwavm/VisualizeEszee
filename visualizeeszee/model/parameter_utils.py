@@ -83,7 +83,16 @@ def get_models(dist_name: str, profgeom: str = 'sph',
         'log10m': 'log10M', 'log10_m500': 'log10M', 'log10': 'log10M',
         'mass': 'mass', 'm500': 'mass', 'bias': 'bias',
         'e': 'e', 'ellipticity': 'e', 'angle': 'angle', 'offset': 'offset',
-        'temperature': 'temperature', 'depth': 'depth'
+        'temperature': 'temperature', 'depth': 'depth',
+        # Morphology block (Sanders+2025). Keys here are matched after
+        # lowercasing, so the canonical YAML spellings need entries too.
+        'h': 'H', 'slosh': 'H',
+        'slosh_angle': 'slosh_angle', 'theta_h': 'slosh_angle',
+        'm1': 'M1', 'm2': 'M2', 'm3': 'M3', 'm4': 'M4',
+        'm1_angle': 'M1_angle', 'm2_angle': 'M2_angle',
+        'm3_angle': 'M3_angle', 'm4_angle': 'M4_angle',
+        'theta_1': 'M1_angle', 'theta_2': 'M2_angle',
+        'theta_3': 'M3_angle', 'theta_4': 'M4_angle'
     }
 
     # Harmonize cluster-like parameters in a separate dict

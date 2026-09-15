@@ -6,6 +6,70 @@ from ..utils.utils import cosmo
 
 def elos(e): return 1.00-(1.00-e)/np.sqrt(0.50*(1.00+(1.00-e)**2))
 
+# Morphological distortions (Sanders+2025, arXiv:2502.02239)
+# ----------------------------------------------------------------------
+# Mirrors the implementation in eszee/model.py. Slosh H perturbs the
+# radius before the profile lookup; the multipole magnitudes M1-M4
+# modulate the surface brightness afterwards. Only the model types in
+# morphmodels carry these parameters.
+morphlab = np.array(['H', 'Slosh angle (deg)',
+                     'M1', 'M1 angle (deg)', 'M2', 'M2 angle (deg)',
+                     'M3', 'M3 angle (deg)', 'M4', 'M4 angle (deg)'])
+morphmodels = {'gnfwPressure', 'gnfwEmulator'}
+
+
+def _morphval(params, key):
+    """Named lookup tolerating an explicit YAML null."""
+    value = params.get(key, 0.00)
+    return 0.00 if value is None else value
+
+
+def morphpars(params):
+    """(H, theta_H, [M1..M4], [theta_1..theta_4]) from a named dict.
+
+    eszee reads these from the tail of a positional vector; here they
+    are named keys, but the returned tuple is deliberately the same
+    shape so the call sites read alike in both packages.
+    """
+    mags = np.array([_morphval(params, f'M{m}') for m in range(1, 5)])
+    angs = np.array([_morphval(params, f'M{m}_angle')
+                     for m in range(1, 5)])
+    return (_morphval(params, 'H'), _morphval(params, 'slosh_angle'),
+            mags, angs)
+
+
+def sloshGrid(grid, gridx, gridy, mag, ang):
+    """Radial perturbation in the elliptical frame (eq. 18/20).
+
+    r_eff >= r*(1-H) >= 0 for H < 1, so no clipping is needed.
+    """
+    if mag == 0.00: return grid
+    ang = np.deg2rad(ang)
+    return grid+mag*(gridx*np.cos(ang)-gridy*np.sin(ang))
+
+
+def sloshNorm(mag):
+    """Brightness rescaling keeping the sloshed flux fixed (eq. 19)."""
+    return (1.00-mag**2)**1.5
+
+
+def multiPole(gridx, gridy, mags, angs):
+    """Azimuthal modulation summed over orders (eq. 21).
+
+    Angles follow the mbproj2d rotation convention
+    sin(m*(theta-theta_m)), not the paper's sin(m*theta+theta_0).
+    Left unnormalised to match eszee: against a symmetric profile each
+    sine averages to zero over azimuth, but once slosh is active the
+    flux does shift by a few percent and the amplitude absorbs it.
+    """
+    if not np.any(mags): return 1.00
+    azim = np.arctan2(gridy, gridx)
+    factor = np.ones_like(azim)
+    for m, (mag, ang) in enumerate(zip(mags, angs), start=1):
+        if mag != 0.00:
+            factor = factor+mag*np.sin(m*(azim-np.deg2rad(ang)))
+    return factor
+
 # 3D A10 model profile
 # ----------------------------------------------------------------------
 def a10RadialProfile(x,alpha,beta,gamma,ap,c500,mass):

@@ -157,6 +157,21 @@ distributions:
       beta: 5.4905
       gamma: 0.3081
       redshift: 1.0
+      # Morphology block (Sanders+2025), in eszee's tail order so a
+      # 22-parameter posterior maps onto these names positionally.
+      # M1-M4 must each be a scalar: get_models expands any
+      # list-valued custom_params entry into separate summed
+      # components, so M1=[...] would build four clusters.
+      H: 0.0
+      slosh_angle: 0.0
+      M1: 0.0
+      M1_angle: 0.0
+      M2: 0.0
+      M2_angle: 0.0
+      M3: 0.0
+      M3_angle: 0.0
+      M4: 0.0
+      M4_angle: 0.0
 
   # Ghirardini+2017
   g17_ex:

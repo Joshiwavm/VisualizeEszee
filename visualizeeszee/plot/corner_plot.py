@@ -54,6 +54,17 @@ _PARAM_LABELS: dict[str, str] = {
     'c500':        r'$c_{500}$',
     'alpha_p':     r'$\alpha_p$',
     'bias':        r'$b$',
+    # morphology params (Sanders+2025)
+    'H':           r'$H$',
+    'slosh_angle': r'$\theta_H$ [deg]',
+    'M1':          r'$M_1$',
+    'M1_angle':    r'$\theta_1$ [deg]',
+    'M2':          r'$M_2$',
+    'M2_angle':    r'$\theta_2$ [deg]',
+    'M3':          r'$M_3$',
+    'M3_angle':    r'$\theta_3$ [deg]',
+    'M4':          r'$M_4$',
+    'M4_angle':    r'$\theta_4$ [deg]',
     # point-source params (positional order in guess array)
     'ps_ra':       r'RA$_\mathrm{PS}$ [deg]',
     'ps_dec':      r'Dec$_\mathrm{PS}$ [deg]',
