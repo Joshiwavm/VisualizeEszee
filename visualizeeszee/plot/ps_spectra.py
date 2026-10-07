@@ -487,3 +487,84 @@ class PlotPointSourceSpectra:
         if return_fig:
             return fig, axes
         plt.show()
+
+    def make_point_source_table(self, filename, freqs_ghz=(92.0, 41.8),
+                                snr_min=3.0, save=True, output_dir=None):
+        """LaTeX table of forward-modelled point-source fluxes.
+
+        Fluxes at (nu_B3, nu_B1) = ``freqs_ghz`` are evaluated per posterior
+        sample of a run with free doublePowerLaw point sources; alpha is the
+        two-point index between them. Band 1 fluxes with S/N < ``snr_min``
+        are given as 95 per cent upper limits.
+        """
+        import corner
+
+        names, _, _, samples, weights, _, _ = \
+            self._load_corner_pickle(filename)
+        nu3, nu1 = (f * 1e9 for f in freqs_ghz)
+
+        def _q(x, qs=(0.16, 0.5, 0.84)):
+            return corner.quantile(x, list(qs), weights=weights)
+
+        def _cell(x):
+            lo, mid, hi = _q(x)
+            return f'${mid:.1f}^{{+{hi - mid:.1f}}}_{{-{mid - lo:.1f}}}$'
+
+        rows = []
+        for i in (i for i, n in enumerate(names) if n == 'ps_ra'):
+            ra, dec, a_sync, a_dust, amp_sync, amp_dust = \
+                samples[:, i:i + 6].T
+            ps = {'spec_type': 'doublePowerLaw',
+                  'amp1': amp_dust, 'spec_index': a_dust,
+                  'amp2': amp_sync, 'spec_index2': a_sync}
+            s3 = self._compute_ps_model_spectrum(ps, nu3) * 1e6
+            s1 = self._compute_ps_model_spectrum(ps, nu1) * 1e6
+            lo, mid, hi = _q(s1)
+            if mid / (0.5 * (hi - lo)) < snr_min:
+                b1 = f'$<${_q(s1, [0.95])[0]:.1f}'
+                alpha = '---'
+            else:
+                b1 = _cell(s1)
+                alpha = _cell(np.log(s3 / s1) / np.log(nu3 / nu1))
+            rows.append(f'{_q(ra, [0.5])[0]:.5f} & '
+                        f'{_q(dec, [0.5])[0]:.5f} & '
+                        f'{_cell(s3)} & {b1} & {alpha} \\\\')
+
+        f3, f1 = (f'{f:g}' for f in freqs_ghz)
+        tex = '\n'.join([
+            r'\begin{table}',
+            r'\centering',
+            r'\caption{Mm-bright continuum source fluxes and spectral '
+            r'indices.}',
+            r'\label{tab:cont_fluxes}',
+            r'\begin{tabular}{rrrrr}',
+            r'\hline',
+            r'RA [deg] & Dec [deg] & $S_{\rm B3}$ [$\mu$Jy]$^a$ & '
+            r'$S_{\rm B1}$ [$\mu$Jy]$^{a,b}$ & $\alpha_\nu$$^c$ \\',
+            r'\hline',
+            *rows,
+            r'\hline',
+            r'\end{tabular}',
+            r'\begin{minipage}{\columnwidth}',
+            r'\small',
+            fr'$^a$ Intrinsic model fluxes at {f3} and {f1}\,GHz: posterior '
+            r'median and 68 per cent interval of the forward-modelled '
+            r'point-source fit. \\',
+            fr'$^b$ Upper limits are 95 per cent for S/N $<$ {snr_min:g}. \\',
+            fr'$^c$ Two-point spectral index between {f1} and {f3}\,GHz.',
+            r'\end{minipage}',
+            r'\end{table}',
+        ])
+
+        if save:
+            _safe_target = str(getattr(self, 'target', None)
+                               or 'unknown').replace(' ', '_')
+            if output_dir is None:
+                output_dir = f'../plots/VisualizeEszee/{_safe_target}/table/'
+            os.makedirs(output_dir, exist_ok=True)
+            tex_path = os.path.join(
+                output_dir, f'{_safe_target}_point_source_table.tex')
+            with open(tex_path, 'w') as f:
+                f.write(tex + '\n')
+            print(f'Saved: {tex_path}')
+        return tex

@@ -263,7 +263,7 @@ class PlotRadialDistributions:
 
     def _plot_single_radial_distribution(self, UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors,
                                        bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
-                                       label_imag: bool = True, show_label: bool = True,
+                                       color, label_imag: bool = True, show_label: bool = True,
                                        ylim_real=(-4, 0.6), ylim_imag=(-0.4, 0.4), **kwargs):
         """
         Create a single radial distribution plot.
@@ -273,10 +273,6 @@ class PlotRadialDistributions:
         **kwargs : dict
             Additional keyword arguments passed to matplotlib errorbar functions.
         """
-
-        # Define colors for different datasets
-        colors = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9']
-        color = colors[color_idx % len(colors)]
 
         # Convert bin edges to k-lambda units (assuming they're already in the right units)
         x = bin_centers / 1e3  # Convert to k-lambda if needed
@@ -381,6 +377,7 @@ class PlotRadialDistributions:
                                 residual_model: str | None = None,
                                 show_bands: bool = True,
                                 data_zorder: dict | None = None,
+                                data_colors: dict | None = None,
                                 model_styles: dict | None = None,
                                 ylim_real: tuple | None = None,
                                 ylim_imag: tuple | None = None,
@@ -400,6 +397,10 @@ class PlotRadialDistributions:
             All other model curves are also shown relative to this reference
             (each curve − reference_curve), so the reference model appears as a
             zero line and deviations highlight differences between models.
+        data_colors : dict or None
+            {dataset name: matplotlib colour} overriding the default
+            ``C<i>`` colour of that dataset's points, model curves and
+            legend entry.
         model_styles : dict or None
             {base model name: matplotlib kwargs} overriding that model's curve
             style; applied to its legend proxy too, so curve and key stay in
@@ -462,6 +463,9 @@ class PlotRadialDistributions:
         ylim_real_arg = ylim_real if ylim_real is not None else ((-4, 0.6) if residual_model is None else (-1.3, 1))
         ylim_imag_arg = ylim_imag if ylim_imag is not None else ((-0.4, 0.4) if residual_model is None else None)
 
+        dataset_colors = [(data_colors or {}).get(n, f"C{i % 10}")
+                          for i, n in enumerate(dataset_names)]
+
         # Data plotting -------------------------------------------------
         color_idx = 0
         data_handles = []
@@ -478,7 +482,7 @@ class PlotRadialDistributions:
             h_real = self._plot_single_radial_distribution(
                 UVrealbinned, UVrealerrors, UVimagbinned, UVimagerrors,
                 bin_edges, bin_centers, name, save_plots, output_dir, axes, color_idx,
-                label_imag=False, show_label=show_label,
+                dataset_colors[i], label_imag=False, show_label=show_label,
                 ylim_real=ylim_real_arg, ylim_imag=ylim_imag_arg,
                 zorder=_zorder, **kwargs
             )
@@ -501,7 +505,7 @@ class PlotRadialDistributions:
 
             for i, name in enumerate(dataset_names):
                 central_field = self._find_central_field(name)
-                dataset_color = f"C{i % 10}"
+                dataset_color = dataset_colors[i]
 
                 # Collect candidate models; match by full name or base name
                 model_entries = []
@@ -649,7 +653,7 @@ class PlotRadialDistributions:
             # Build proxy handles for real-part markers (match colors)
             proxy_handles = []
             for i, dn in enumerate(dataset_names):
-                color = f"C{i % 10}"
+                color = dataset_colors[i]
                 proxy_handles.append(Line2D([0], [0], ls='', marker='D', markerfacecolor='white',
                                             markeredgecolor=color, color=color, label=dn.replace('_', ' ')))
             def _model_proxy(mn, ls):
